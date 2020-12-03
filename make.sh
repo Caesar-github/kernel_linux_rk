@@ -29,9 +29,18 @@ function help()
 function make_extlinux_conf()
 {
 	echo "label rockchip-kernel-4.19" > boot_linux/extlinux/extlinux.conf
-	echo "	kernel /extlinux/Image" >> boot_linux/extlinux/extlinux.conf
+	echo "	kernel /extlinux/zImage" >> boot_linux/extlinux/extlinux.conf
 	echo "	fdt /extlinux/toybrick.dtb" >> boot_linux/extlinux/extlinux.conf
+}
+
+function make_extlinux_conf_initramfs()
+{
 	echo "	append  earlycon=uart8250,mmio32,0xff1a0000 initrd=/initramfs-toybrick-${VERSION}.img root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/extlinux.conf
+}
+
+function make_extlinux_conf_rv1126()
+{
+	echo "	append  earlycon=uart8250,mmio32,0xff570000 console=ttyFIQ0 root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/extlinux.conf
 }
 
 function copy_initramfs()
@@ -94,10 +103,13 @@ case $1 in
 
 		cp -f arch/${MACHINE}/boot/dts/${ROCKCHIP}/${DTB}.dtb boot_linux/extlinux/toybrick.dtb
 		cp -f arch/${MACHINE}/boot/dts/${ROCKCHIP}/${DTB}.dtb boot_linux/extlinux/toybrick-default.dtb
-		cp -f arch/${MACHINE}/boot/Image boot_linux/extlinux/
+		cp -f arch/${MACHINE}/boot/zImage boot_linux/extlinux/
 		make_extlinux_conf
 		if [ $2 != "rv1126" ]; then
+			make_extlinux_conf_initramfs
 			copy_initramfs
+		else
+			make_extlinux_conf_rv1126
 		fi
 
 		if [ "`uname -i`" == "aarch64" ]; then
