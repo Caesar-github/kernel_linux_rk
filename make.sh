@@ -33,6 +33,13 @@ function make_extlinux_conf()
 	echo "	fdt /extlinux/toybrick.dtb" >> boot_linux/extlinux/extlinux.conf
 }
 
+function make_toybrick_release()
+{	
+	echo "Version: Toybrick release 2.0 (initramfs)" > boot_linux/toybrick-release
+	echo "Model: TB-RV1126D" >> boot_linux/toybrick-release
+	echo "Manufacture ID: TRV11261210100001" >> boot_linux/toybrick-release
+}
+
 function make_extlinux_conf_initramfs()
 {
 	echo "	append  earlycon=uart8250,mmio32,0xff1a0000 initrd=/initramfs-toybrick-${VERSION}.img root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/extlinux.conf
@@ -109,6 +116,7 @@ case $1 in
 			make_extlinux_conf_initramfs
 			copy_initramfs
 		else
+			make_toybrick_release
 			make_extlinux_conf_rv1126
 		fi
 
