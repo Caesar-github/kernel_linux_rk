@@ -100,7 +100,14 @@ case $1 in
 				DEFCONFIG=rv1126_defconfig
 				ROCKCHIP=./
 				;;
+			rv1126-lt7911d)
+				DTB=rv1126-lt7911d
+				MACHINE=arm
+				DEFCONFIG=rv1126_defconfig
+				ROCKCHIP=./
+				;;
 			*)
+
 				help
 				exit 1
 				;;
@@ -112,7 +119,7 @@ case $1 in
 		cp -f arch/${MACHINE}/boot/dts/${ROCKCHIP}/${DTB}.dtb boot_linux/extlinux/toybrick-default.dtb
 		cp -f arch/${MACHINE}/boot/zImage boot_linux/extlinux/
 		make_extlinux_conf
-		if [ $2 != "rv1126" ]; then
+		if [ $2 != "rv1126" ] && [ $2 != "rv1126-lt7911d" ]; then
 			make_extlinux_conf_initramfs
 			copy_initramfs
 		else
