@@ -1752,6 +1752,15 @@ config VIDEO_MP6507
 	help
 	  This a driver used pwm to drive motor
 
+config VIDEO_LT7911D
+        tristate "LONTIUM LT7911D  support"
+        depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+        depends on MEDIA_CAMERA_SUPPORT
+        ---help---
+          This is a Video4Linux2 sensor driver for LONTIUM LT7911D.
+
+          To compile this driver as a module, choose M here: the
+          module will be called lt7911d.
 endmenu
 
 menu "Sensors used on soc_camera driver"
