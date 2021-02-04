@@ -558,7 +558,7 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
         if (!IS_ERR(lt7911d->reset_gpio))
            gpiod_direction_output(lt7911d->reset_gpio, 1);
 
-        usleep_range(10000, 2000);
+        usleep_range(1000, 2000);
 
         if (!IS_ERR(lt7911d->reset_gpio))
            gpiod_direction_output(lt7911d->reset_gpio, 0);
