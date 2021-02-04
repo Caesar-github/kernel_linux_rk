@@ -374,27 +374,11 @@ static irqreturn_t lt7911d_irq_handler(int irq, void *dev_id)
         return handled ? IRQ_HANDLED : IRQ_NONE;
 }
 
-static void lt7911d_get_module_inf(struct lt7911d *lt7911d,
-				  struct rkmodule_inf *inf)
-{
-	memset(inf, 0, sizeof(*inf));
-	strlcpy(inf->base.sensor, LT7911D_NAME, sizeof(inf->base.sensor));
-	strlcpy(inf->base.module, "CMK-CT0116",
-		sizeof(inf->base.module));
-	strlcpy(inf->base.lens, "Largan-50013A1", sizeof(inf->base.lens));
-}
-
-
 static long lt7911d_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
-		struct lt7911d *lt7911d = to_lt7911d(sd);
-		struct rkmodule_hdr_cfg *hdr;
-
         long ret = 0;
         u32 stream = 0;
         switch (cmd) {
-	//	case PREISP_CMD_SET_HDRAE_EXP:
-	//		break;
         case RKMODULE_SET_QUICK_STREAM:
                 stream = *((u32 *)arg);
                 if (stream) {
@@ -403,16 +387,6 @@ static long lt7911d_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
                     printk("stream off \n");
                 }
                 break;
-		case RKMODULE_GET_MODULE_INFO:
-			lt7911d_get_module_inf(lt7911d, (struct rkmodule_inf *)arg);
-			break;
-		case RKMODULE_GET_HDR_CFG:
-			hdr = (struct rkmodule_hdr_cfg *)arg;
-			hdr->esp.mode = HDR_NORMAL_VC;
-			hdr->hdr_mode = NO_HDR;
-			break;
-		case RKMODULE_SET_HDR_CFG:
-			break;
         default:
                 ret = -ENOIOCTLCMD;
                 break;
@@ -614,7 +588,6 @@ static int lt7911d_probe(struct i2c_client *client,
 	struct lt7911d *lt7911d;
 	struct v4l2_subdev *sd;
         struct v4l2_dv_timings default_timing = V4L2_DV_BT_CEA_1920X1080P60;
-	char facing[2];
 	int ret=0;
 
 	dev_info(dev, "driver version: %02x.%02x.%02x\n",
@@ -759,16 +732,7 @@ static int lt7911d_probe(struct i2c_client *client,
 	if (ret < 0)
 		goto err_clean_entity;
 
-	memset(facing, 0, sizeof(facing));
-	//if (strcmp(lt7911d->module_facing, "back") == 0)
-	//	facing[0] = 'b';
-	//else
-		facing[0] = 'f';
-
-	snprintf(sd->name, sizeof(sd->name), "m%02d_%s_%s %s",
-		 0, facing,
-		 LT7911D_NAME, dev_name(sd->dev));
-	ret = v4l2_async_register_subdev_sensor_common(sd);
+	ret = v4l2_async_register_subdev(sd);
 	if (ret) {
 		dev_err(dev, "v4l2 async register subdev failed\n");
 		goto err_clean_entity;
@@ -779,7 +743,7 @@ static int lt7911d_probe(struct i2c_client *client,
         ret = lt7911d_check_device_id(lt7911d, client);
         if (ret)
                goto err_clean_entity;
-	printk("------------------------ chenyf\n");
+
 	return 0;
 
 err_clean_entity:
