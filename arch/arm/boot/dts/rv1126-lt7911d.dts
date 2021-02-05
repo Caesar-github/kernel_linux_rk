@@ -177,3 +177,30 @@
 	};
 };
 
+&rkcif_mipi_lvds_sditf {
+	status = "disabled";
+};
+
+&rkisp {
+	status = "disabled";
+};
+
+&rkisp_vir0 {
+	status = "disabled";
+};
+
+&rkisp_mmu {
+	status = "disabled";
+};
+
+&rkispp {
+	status = "disabled";
+};
+
+&rkispp_vir0 {
+	status = "disabled";
+};
+
+&rkispp_mmu {
+	status = "disabled";
+};
