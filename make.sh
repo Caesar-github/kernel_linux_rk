@@ -91,10 +91,16 @@ case $1 in
 				MACHINE=arm64
 				;;
 			prox)
-                DTB=rk3399pro-toybrick-prox-linux
+				DTB=rk3399pro-toybrick-prox-linux
 				MACHINE=arm64
                 ;;
-			rv1126)
+			rv1126d)
+				DTB=rv1126-toybrick-linux
+				MACHINE=arm
+				DEFCONFIG=rv1126_defconfig
+				ROCKCHIP=./
+				;;
+			rv1126-evb)
 				DTB=rv1126-evb-ddr3-v13
 				MACHINE=arm
 				DEFCONFIG=rv1126_defconfig
@@ -119,7 +125,7 @@ case $1 in
 		cp -f arch/${MACHINE}/boot/dts/${ROCKCHIP}/${DTB}.dtb boot_linux/extlinux/toybrick-default.dtb
 		cp -f arch/${MACHINE}/boot/zImage boot_linux/extlinux/
 		make_extlinux_conf
-		if [ $2 != "rv1126" ] && [ $2 != "rv1126-lt7911d" ]; then
+		if [ -z `echo $2 | grep rv1126` ]; then
 			make_extlinux_conf_initramfs
 			copy_initramfs
 		else
