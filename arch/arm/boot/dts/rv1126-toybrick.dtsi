@@ -92,6 +92,7 @@
 		#sound-dai-cells = <0>;
 	};
 
+#if 0
 	pdm_mic_array: pdm-mic_array {
 		status = "disabled";
 		compatible = "simple-audio-card";
@@ -101,6 +102,21 @@
 		};
 		simple-audio-card,codec {
 			sound-dai = <&dummy_codec>;
+		};
+	};
+#endif
+
+	lt7911d_i2s: lt7911d_i2s {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,name = "LT,lt7911d_i2s";
+		simple-audio-card,cpu {
+			sound-dai = <&i2s2_2ch>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&dummy_codec>;
+			frame-master;
+			bitclock-master;
 		};
 	};
 
@@ -192,6 +208,12 @@
 
 &cpu0 {
 	cpu-supply = <&vdd_arm>;
+};
+
+&i2s2_2ch {
+	status = "okay";
+	rockchip,bclk-fs = <64>;
+	#sound-dai-cells = <0>;
 };
 
 &cpu_tsadc {
