@@ -492,7 +492,7 @@
 	};
 };
 
-&csi_dphy0 {
+&csi_dphy1 {
 	status = "okay";
 
 	ports {
@@ -503,9 +503,9 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			mipi_in_ucam0: endpoint@1 {
+			mipi_in_ucam1: endpoint@1 {
 				reg = <1>;
-				remote-endpoint = <&ucam_out0>;
+				remote-endpoint = <&ucam_out1>;
 				data-lanes = <1 2 3 4>;
 			};
 		};
@@ -522,7 +522,7 @@
 	};
 };
 
-&csi_dphy1 {
+&csi_dphy0 {
 	status = "okay";
 
 	ports {
@@ -867,8 +867,8 @@
 		rockchip,camera-module-lens-name = "Largan-50013A1";
 
 		port {
-			ucam_out0: endpoint {
-				remote-endpoint = <&mipi_in_ucam0>;
+			ucam_out1: endpoint {
+				remote-endpoint = <&mipi_in_ucam1>;
 				data-lanes = <1 2 3 4>;
 			};
 		};
