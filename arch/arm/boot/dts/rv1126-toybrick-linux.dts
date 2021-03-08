@@ -5,6 +5,7 @@
 /dts-v1/;
 #include "rv1126.dtsi"
 #include "rv1126-toybrick.dtsi"
+#include "rv1126-toybrick-imx317.dtsi"
 / {
 	model = "Rockchip RV1126 Toybrick Board";
 	compatible = "rockchip,rv1126-toybrick-linux", "rockchip,rv1126";

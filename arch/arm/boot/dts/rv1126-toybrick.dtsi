@@ -790,6 +790,8 @@
 			};
 
 			vcc_avdd: LDO_REG7 {
+				regulator-always-on;
+				regulator-boot-on;
 				regulator-min-microvolt = <2800000>;
 				regulator-max-microvolt = <2800000>;
 				regulator-name = "vcc_avdd";
@@ -1107,6 +1109,11 @@
 	};
 };
 
+&rkisp {
+	status = "okay";
+};
+
+#if 0
 &rkcif_mipi_lvds_sditf {
 	status = "okay";
 
@@ -1117,10 +1124,6 @@
 			data-lanes = <1 2 3 4>;
 		};
 	};
-};
-
-&rkisp {
-	status = "okay";
 };
 
 &rkisp_vir0 {
@@ -1139,7 +1142,7 @@
 		};
 	};
 };
-
+#endif
 &rkisp_mmu {
 	status = "disabled";
 };
