@@ -857,7 +857,7 @@
                 power-domains = <&power RV1126_PD_VI>;
                 pinctrl-names = "rockchip,camera_default";
                 pinctrl-0 = <&mipicsi_clk0>;
-		reset-gpios = <&gpio1 RK_PD7 GPIO_ACTIVE_HIGH>;//GPIO3_A5
+		reset-gpios = <&gpio2 RK_PA5 GPIO_ACTIVE_HIGH>;//GPIO3_A5
 		irq-gpios = <&gpio0 RK_PB6 GPIO_ACTIVE_HIGH>;//GPIO3_A5
 
 		rockchip,camera-module-index = <1>;
