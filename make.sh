@@ -106,8 +106,8 @@ case $1 in
 				DEFCONFIG=rv1126_defconfig
 				ROCKCHIP=./
 				;;
-			rv1126-lt7911d)
-				DTB=rv1126-lt7911d
+			rv1126-ToyT)
+				DTB=rv1126-ToyT
 				MACHINE=arm
 				DEFCONFIG=rv1126_defconfig
 				ROCKCHIP=./
