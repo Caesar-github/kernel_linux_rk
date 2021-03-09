@@ -1,1 +1,0 @@
-obj-y := techpoint_v4l2.o techpoint_dev.o techpoint_tp9930.o techpoint_tp2855.o
