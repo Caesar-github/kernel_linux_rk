@@ -92,20 +92,20 @@
 		#sound-dai-cells = <0>;
 	};
 
-	pdm_mic_array: pdm-mic_array {
-		status = "disabled";
+	lt7911d_i2s: lt7911d_i2s {
+		status = "okay";
 		compatible = "simple-audio-card";
-		simple-audio-card,name = "rockchip,pdm-mic-array";
+		simple-audio-card,name = "LT,lt7911d_i2s";
 		simple-audio-card,cpu {
-			sound-dai = <&pdm>;
+			sound-dai = <&i2s0_8ch>;
 		};
 		simple-audio-card,codec {
 			sound-dai = <&dummy_codec>;
+			frame-master;
+			bitclock-master;
 		};
 	};
-
-
-
+	
 	vcc18_lcd_n: vcc18-lcd-n {
 		compatible = "regulator-fixed";
 		regulator-name = "vcc18_lcd_n";
@@ -612,13 +612,7 @@
 &i2s0_8ch {
 	status = "okay";
 	#sound-dai-cells = <0>;
-	rockchip,clk-trcm = <1>;
-	rockchip,i2s-rx-route = <3 1 2 0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2s0m0_sclk_tx
-		     &i2s0m0_lrck_tx
-		     &i2s0m0_sdo0
-		     &i2s0m0_sdo1_sdi3>;
+	rockchip,clk-trcm = <2>;
 };
 
 &iep {
@@ -710,16 +704,6 @@
 	status = "okay";
 };
 
-&pdm {
-	status = "disabled";
-	#sound-dai-cells = <0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&pdmm0_clk
-		     &pdmm0_clk1
-		     &pdmm0_sdi0
-		     &pdmm0_sdi1
-		     &pdmm0_sdi2>;
-};
 
 &pinctrl {
 
