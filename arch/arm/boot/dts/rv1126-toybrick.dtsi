@@ -140,6 +140,19 @@
 			sound-dai = <&rk809_codec>;
 		};
 	};
+	es7210_sound: es7210-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,es7210";
+		simple-audio-card,cpu {
+			sound-dai = <&i2s0_8ch>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&es7210>;
+		};
+	};
 
 	sdio_pwrseq: sdio-pwrseq {
 		compatible = "mmc-pwrseq-simple";
@@ -207,14 +220,41 @@
 	};
 };
 
+&i2c3 {
+	status = "okay";
+	es7210: es7210@40 {
+		#sound-dai-cells = <0>;
+		compatible = "MicArray_0";
+		reg = <0x40>;
+		clocks = <&cru MCLK_I2S0_TX_OUT2IO>;
+		clock-names = "mclk";
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2c3m2_xfer
+					&i2s0m0_mclk>;
+	};
+
+	es7210_1: es7210@42 {
+		compatible = "MicArray_1";
+		reg = <0x42>;
+	};
+
+};
+
+
 &cpu0 {
 	cpu-supply = <&vdd_arm>;
 };
 
 &i2s2_2ch {
 	status = "okay";
-	rockchip,bclk-fs = <64>;
-	#sound-dai-cells = <0>;
+	rockchip,bclk-fs =  <64>;
+	#sound-dai-cells =  <0>;
+	rockchip,clk-trcm = <2>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2s2m1_sdi
+					&i2s2m1_sclk
+					&i2s2m1_lrck
+					&i2s2m1_mclk>;
 };
 
 &cpu_tsadc {
@@ -847,13 +887,7 @@
 &i2s0_8ch {
 	status = "okay";
 	#sound-dai-cells = <0>;
-	rockchip,clk-trcm = <1>;
-	rockchip,i2s-rx-route = <3 1 2 0>;
-	pinctrl-names = "default";
-	pinctrl-0 = <&i2s0m0_sclk_tx
-		     &i2s0m0_lrck_tx
-		     &i2s0m0_sdo0
-		     &i2s0m0_sdo1_sdi3>;
+	//rockchip,clk-trcm = <1>;
 };
 
 &i2s1_2ch {
