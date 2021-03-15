@@ -134,6 +134,10 @@ int dhd_msg_level = DHD_ERROR_VAL | DHD_FWLOG_VAL;// | DHD_EVENT_VAL
 #include <linux/pm_runtime.h>
 #endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
 
+#ifdef CSI_SUPPORT
+#include <dhd_csi.h>
+#endif /* CSI_SUPPORT */
+
 #ifdef SOFTAP
 char fw_path2[MOD_PARAM_PATHLEN];
 extern bool softap_enabled;
@@ -1216,6 +1220,23 @@ exit:
 	DHD_OS_WAKE_UNLOCK(dhd_pub);
 #endif /* DHD_PCIE_NATIVE_RUNTIMEPM */
 
+#ifdef WL_MONITOR
+	/* Intercept monitor ioctl here, add/del monitor if */
+	if (ret == BCME_OK && ioc->cmd == WLC_SET_MONITOR) {
+		int val = 0;
+		if (buf != NULL && len != 0) {
+			if (len >= 4) {
+				val = *(int*)buf;
+			} else if (len >= 2) {
+				val = *(short*)buf;
+			} else {
+				val = *(char*)buf;
+			}
+		}
+		dhd_set_monitor(dhd_pub, ifidx, val);
+	}
+#endif /* WL_MONITOR */
+
 	return ret;
 }
 
@@ -1502,11 +1523,6 @@ dhd_flow_ring_debug(dhd_pub_t *dhd, char *msg, uint msglen)
 #endif /* BCMPCIE */
 #endif /* DHD_DEBUG */
 
-#ifdef PKT_STATICS
-extern pkt_statics_t tx_statics;
-extern void dhdsdio_txpktstatics(void);
-#endif
-
 static int
 dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const char *name,
             void *params, int plen, void *arg, int len, int val_size)
@@ -1534,8 +1550,8 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const ch
 		if (bus_api_rev_len)
 			bcm_strncat_s((char*)arg + dhd_ver_len, bus_api_rev_len, bus_api_revision,
 				bus_api_rev_len);
-#ifdef PKT_STATICS
-		memset((uint8*) &tx_statics, 0, sizeof(pkt_statics_t));
+#if defined(BCMSDIO) && defined(PKT_STATICS)
+		dhd_bus_clear_txpktstatics(dhd_pub->bus);
 #endif
 		break;
 
@@ -1579,8 +1595,8 @@ dhd_doiovar(dhd_pub_t *dhd_pub, const bcm_iovar_t *vi, uint32 actionid, const ch
 	case IOV_GVAL(IOV_MSGLEVEL):
 		int_val = (int32)dhd_msg_level;
 		bcopy(&int_val, arg, val_size);
-#ifdef PKT_STATICS
-		dhdsdio_txpktstatics();
+#if defined(BCMSDIO) && defined(PKT_STATICS)
+		dhd_bus_dump_txpktstatics(dhd_pub->bus);
 #endif
 		break;
 
@@ -3669,6 +3685,11 @@ wl_process_host_event(dhd_pub_t *dhd_pub, int *ifidx, void *pktdata, uint pktlen
 		}
 		break;
 #endif /* DHD_POST_EAPOL_M1_AFTER_ROAM_EVT */
+#if defined(CSI_SUPPORT)
+	case WLC_E_CSI:
+		dhd_csi_event_handler(dhd_pub, event, (void *)event_data);
+		break;
+#endif /* CSI_SUPPORT */
 	case WLC_E_LINK:
 #ifdef PCIE_FULL_DONGLE
 		if (dhd_update_interface_link_status(dhd_pub, (uint8)dhd_ifname2idx(dhd_pub->info,

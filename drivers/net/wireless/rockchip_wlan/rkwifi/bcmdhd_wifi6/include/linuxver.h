@@ -85,6 +85,8 @@
 #include <linux/interrupt.h>
 #include <linux/kthread.h>
 #include <linux/netdevice.h>
+#include <linux/time.h>
+#include <linux/rtc.h>
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 27))
 #include <linux/semaphore.h>
 #else
@@ -383,6 +385,12 @@ extern void timer_cb_compat(struct timer_list *tl);
 
 #endif /* LINUX_VERSION_CODE < KERNEL_VERSION(4, 15, 0) */
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 19, 0)
+#define rtc_time_to_tm(a, b) rtc_time64_to_tm(a, b)
+#else
+#define rtc_time_to_tm(a, b) rtc_time_to_tm(a, b)
+#endif /* LINUX_VER >= 3.19.0 */
+
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 3, 43))
 
 #define dev_kfree_skb_any(a)		dev_kfree_skb(a)
@@ -592,8 +600,13 @@ typedef struct {
 
 /* requires  tsk_ctl_t tsk  argument, the caller's priv data is passed in owner ptr */
 /* note this macro assumes there may be only one context waiting on thread's completion */
+#ifndef DHD_LOG_PREFIX
+#define DHD_LOG_PREFIX "[dhd]"
+#endif
+#define DHD_LOG_PREFIXS DHD_LOG_PREFIX" "
 #ifdef DHD_DEBUG
-#define DBG_THR(x) printk x
+#define	printf_thr(fmt, args...)	printk(DHD_LOG_PREFIXS fmt , ## args)
+#define DBG_THR(args)		do {printf_thr args;} while (0)
 #else
 #define DBG_THR(x)
 #endif // endif
@@ -636,7 +649,9 @@ static inline bool binary_sema_up(tsk_ctl_t *tsk)
 	return sem_up;
 }
 
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0))
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 9, 0))
+#define SMP_RD_BARRIER_DEPENDS(x)
+#elif (LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 0))
 #define SMP_RD_BARRIER_DEPENDS(x) smp_read_barrier_depends(x)
 #else
 #define SMP_RD_BARRIER_DEPENDS(x) smp_rmb(x)

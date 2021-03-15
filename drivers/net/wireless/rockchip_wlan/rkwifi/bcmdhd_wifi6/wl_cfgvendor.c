@@ -1281,6 +1281,11 @@ static int wl_cfgvendor_set_rssi_monitor(struct wiphy *wiphy,
 	int8 max_rssi = 0, min_rssi = 0;
 	const struct nlattr *iter;
 
+	if (!wl_get_drv_status(cfg, CONNECTED, wdev_to_ndev(wdev))) {
+		WL_ERR(("STA is not connected to an AP, rssi monitoring is not allowed\n"));
+		return -EINVAL;
+	}
+
 	nla_for_each_attr(iter, data, len, tmp) {
 		type = nla_type(iter);
 		switch (type) {
@@ -6598,8 +6603,16 @@ wl_cfgvendor_dbg_trigger_mem_dump(struct wiphy *wiphy,
 	struct sk_buff *skb = NULL;
 	struct bcm_cfg80211 *cfg = wiphy_priv(wiphy);
 	dhd_pub_t *dhdp = (dhd_pub_t *)(cfg->pub);
+	u32 supported_features = 0;
 
 	WL_ERR(("wl_cfgvendor_dbg_trigger_mem_dump %d\n", __LINE__));
+
+	ret = dhd_os_dbg_get_feature(dhdp, &supported_features);
+	if (!(supported_features & DBG_MEMORY_DUMP_SUPPORTED)) {
+		WL_ERR(("not support DBG_MEMORY_DUMP_SUPPORTED\n"));
+		ret = -3; //WIFI_ERROR_NOT_SUPPORTED=-3
+		goto exit;
+	}
 
 	dhdp->memdump_type = DUMP_TYPE_CFG_VENDOR_TRIGGERED;
 	ret = dhd_os_socram_dump(bcmcfg_to_prmry_ndev(cfg), &alloc_len);

@@ -57,25 +57,25 @@ uint iw_msg_level = WL_ERROR_LEVEL;
 #define WL_ERROR_MSG(x, args...) \
 	do { \
 		if (iw_msg_level & WL_ERROR_LEVEL) { \
-			printk(KERN_ERR "[dhd] WEXT-ERROR) %s : " x, __func__, ## args); \
+			printk(KERN_ERR DHD_LOG_PREFIXS "WEXT-ERROR) %s : " x, __func__, ## args); \
 		} \
 	} while (0)
 #define WL_TRACE_MSG(x, args...) \
 	do { \
 		if (iw_msg_level & WL_TRACE_LEVEL) { \
-			printk(KERN_ERR "[dhd] WEXT-TRACE) %s : " x, __func__, ## args); \
+			printk(KERN_INFO DHD_LOG_PREFIXS "WEXT-TRACE) %s : " x, __func__, ## args); \
 		} \
 	} while (0)
 #define WL_SCAN_MSG(x, args...) \
 	do { \
 		if (iw_msg_level & WL_SCAN_LEVEL) { \
-			printk(KERN_ERR "[dhd] WEXT-SCAN) %s : " x, __func__, ## args); \
+			printk(KERN_INFO DHD_LOG_PREFIXS "WEXT-SCAN) %s : " x, __func__, ## args); \
 		} \
 	} while (0)
 #define WL_WSEC_MSG(x, args...) \
 	do { \
 		if (iw_msg_level & WL_WSEC_LEVEL) { \
-			printk(KERN_ERR "[dhd] WEXT-WSEC) %s : " x, __func__, ## args); \
+			printk(KERN_INFO DHD_LOG_PREFIXS "WEXT-WSEC) %s : " x, __func__, ## args); \
 		} \
 	} while (0)
 #define WL_ERROR(x) WL_ERROR_MSG x
@@ -283,12 +283,18 @@ dev_wlc_ioctl(
 )
 {
 	struct ifreq ifr;
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	wl_ioctl_t ioc;
 	mm_segment_t fs;
+#else
+	dhd_ioctl_t ioc;
+	int8 index;
+	struct dhd_pub *dhd = dhd_get_pub(dev);
+#endif
 	int ret;
 
 	memset(&ioc, 0, sizeof(ioc));
-#ifdef CONFIG_COMPAT
+#if defined(CONFIG_COMPAT) && (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	ioc.cmd = cmd | WLC_SPEC_FLAG;
 #else
 	ioc.cmd = cmd;
@@ -300,6 +306,7 @@ dev_wlc_ioctl(
 	ifr.ifr_name[sizeof(ifr.ifr_name) - 1] = '\0';
 	ifr.ifr_data = (caddr_t) &ioc;
 
+#if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	fs = get_fs();
 	set_fs(get_ds());
 #if defined(WL_USE_NETDEV_OPS)
@@ -308,6 +315,14 @@ dev_wlc_ioctl(
 	ret = dev->do_ioctl(dev, &ifr, SIOCDEVPRIVATE);
 #endif
 	set_fs(fs);
+#else
+	index = dhd_net2idx(dhd->info, dev);
+	if (index == DHD_BAD_IF) {
+		WL_ERROR(("Bad ifidx from dev:%p\n", dev));
+		return -ENODEV;
+	}
+	ret = dhd_ioctl_process(dhd, index, &ioc, arg);
+#endif
 
 	return ret;
 }
@@ -515,152 +530,6 @@ wl_iw_set_pm(
 }
 #endif /* WIRELESS_EXT > 12 */
 
-#define WL_PM_ENABLE_TIMEOUT 10000
-#if defined(STRICT_GCC_WARNINGS) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == \
-	4 && __GNUC_MINOR__ >= 6))
-#define BCM_SET_CONTAINER_OF(entry, ptr, type, member) \
-_Pragma("GCC diagnostic push") \
-_Pragma("GCC diagnostic ignored \"-Wcast-qual\"") \
-entry = container_of((ptr), type, member); \
-_Pragma("GCC diagnostic pop")
-#else
-#define BCM_SET_CONTAINER_OF(entry, ptr, type, member) \
-entry = container_of((ptr), type, member);
-#endif /* STRICT_GCC_WARNINGS */
-
-void wl_ext_pm_work_handler(struct work_struct *work)
-{
-	struct wl_wext_info *wext_info;
-	s32 pm = PM_FAST;
-	dhd_pub_t *dhd;
-	int ret = 0;
-
-	BCM_SET_CONTAINER_OF(wext_info, work, struct wl_wext_info, pm_enable_work.work);
-
-	WL_TRACE(("%s: Enter\n", __FUNCTION__));
-#if defined(STRICT_GCC_WARNINGS) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == \
-	4 && __GNUC_MINOR__ >= 6))
-_Pragma("GCC diagnostic push")
-_Pragma("GCC diagnostic ignored \"-Wcast-qual\"")
-#endif
-
-	dhd = (dhd_pub_t *)(wext_info->dhd);
-	if (!dhd || !wext_info->dhd->up) {
-		WL_TRACE(("%s: dhd is null or not up\n", __FUNCTION__));
-		return;
-	}
-	if (dhd_conf_get_pm(dhd) >= 0)
-		pm = dhd_conf_get_pm(dhd);
-	ret = dev_wlc_ioctl(wext_info->dev, WLC_SET_PM, &pm, sizeof(pm));
-	if (ret)
-		WL_ERROR(("%s: WLC_SET_PM failed %d\n", __FUNCTION__, ret));
-#if defined(STRICT_GCC_WARNINGS) && defined(__GNUC__) && (__GNUC__ > 4 || (__GNUC__ == \
-	4 && __GNUC_MINOR__ >= 6))
-_Pragma("GCC diagnostic pop")
-#endif
-	DHD_PM_WAKE_UNLOCK(wext_info->dhd);
-
-}
-
-void wl_ext_add_remove_pm_enable_work(struct wl_wext_info *wext_info,
-	bool add)
-{
-	u16 wq_duration = 0;
-	s32 pm = PM_OFF;
-	int ret = 0;
-
-	if (wext_info == NULL || wext_info->dhd == NULL)
-		return;
-
-	mutex_lock(&wext_info->pm_sync);
-	/*
-	 * Make cancel and schedule work part mutually exclusive
-	 * so that while cancelling, we are sure that there is no
-	 * work getting scheduled.
-	 */
-
-	if (delayed_work_pending(&wext_info->pm_enable_work)) {
-		cancel_delayed_work_sync(&wext_info->pm_enable_work);
-		DHD_PM_WAKE_UNLOCK(wext_info->dhd);
-	}
-
-	if (add) {
-		wq_duration = (WL_PM_ENABLE_TIMEOUT);
-	}
-
-	/* It should schedule work item only if driver is up */
-	if (wq_duration && wext_info->dhd->up) {
-		if (dhd_conf_get_pm(wext_info->dhd) >= 0)
-			pm = dhd_conf_get_pm(wext_info->dhd);
-		ret = dev_wlc_ioctl(wext_info->dev, WLC_SET_PM, &pm, sizeof(pm));
-		if (ret)
-			WL_ERROR(("%s: WLC_SET_PM failed %d\n", __FUNCTION__, ret));
-		if (schedule_delayed_work(&wext_info->pm_enable_work,
-				msecs_to_jiffies((const unsigned int)wq_duration))) {
-			DHD_PM_WAKE_LOCK_TIMEOUT(wext_info->dhd, wq_duration);
-		} else {
-			WL_ERROR(("%s: Can't schedule pm work handler\n", __FUNCTION__));
-		}
-	}
-	mutex_unlock(&wext_info->pm_sync);
-
-}
-
-static void
-wl_iw_update_connect_status(struct net_device *dev, enum wl_ext_status status)
-{
-#ifndef WL_CFG80211
-	struct dhd_pub *dhd = dhd_get_pub(dev);
-	int cur_eapol_status = 0;
-	int wpa_auth = 0;
-	int error = -EINVAL;
-	wl_wext_info_t *wext_info = NULL;
-
-	if (!dhd || !dhd->conf)
-		return;
-	wext_info = dhd->wext_info;
-	cur_eapol_status = dhd->conf->eapol_status;
-
-	if (status == WL_EXT_STATUS_CONNECTING) {
-		wl_ext_add_remove_pm_enable_work(wext_info, TRUE);
-		if ((error = dev_wlc_intvar_get(dev, "wpa_auth", &wpa_auth))) {
-			WL_ERROR(("wpa_auth get error %d\n", error));
-			return;
-		}
-		if (wpa_auth & (WPA_AUTH_PSK|WPA2_AUTH_PSK))
-			dhd->conf->eapol_status = EAPOL_STATUS_4WAY_START;
-		else
-			dhd->conf->eapol_status = EAPOL_STATUS_NONE;
-	} else if (status == WL_EXT_STATUS_ADD_KEY) {
-		dhd->conf->eapol_status = EAPOL_STATUS_4WAY_DONE;
-		wake_up_interruptible(&dhd->conf->event_complete);
-	} else if (status == WL_EXT_STATUS_DISCONNECTING) {
-		wl_ext_add_remove_pm_enable_work(wext_info, FALSE);
-		if (cur_eapol_status >= EAPOL_STATUS_4WAY_START &&
-				cur_eapol_status < EAPOL_STATUS_4WAY_DONE) {
-			WL_ERROR(("WPA failed at %d\n", cur_eapol_status));
-			dhd->conf->eapol_status = EAPOL_STATUS_NONE;
-		} else if (cur_eapol_status >= EAPOL_STATUS_WSC_START &&
-				cur_eapol_status < EAPOL_STATUS_WSC_DONE) {
-			WL_ERROR(("WPS failed at %d\n", cur_eapol_status));
-			dhd->conf->eapol_status = EAPOL_STATUS_NONE;
-		}
-	} else if (status == WL_EXT_STATUS_DISCONNECTED) {
-		if (cur_eapol_status >= EAPOL_STATUS_4WAY_START &&
-				cur_eapol_status < EAPOL_STATUS_4WAY_DONE) {
-			WL_ERROR(("WPA failed at %d\n", cur_eapol_status));
-			dhd->conf->eapol_status = EAPOL_STATUS_NONE;
-			wake_up_interruptible(&dhd->conf->event_complete);
-		} else if (cur_eapol_status >= EAPOL_STATUS_WSC_START &&
-				cur_eapol_status < EAPOL_STATUS_WSC_DONE) {
-			WL_ERROR(("WPS failed at %d\n", cur_eapol_status));
-			dhd->conf->eapol_status = EAPOL_STATUS_NONE;
-		}
-	}
-#endif
-	return;
-}
-
 int
 wl_iw_send_priv_event(
 	struct net_device *dev,
@@ -765,7 +634,7 @@ done:
 
 #define DHD_CHECK(dhd, dev) \
  	if (!dhd) { \
-		WL_ERROR (("[dhd-%s] %s: dhd is NULL\n", dev->name, __FUNCTION__)); \
+		WL_ERROR (("[%s] dhd is NULL\n", dev->name)); \
 		return -ENODEV; \
 	} \
 
@@ -1097,7 +966,7 @@ wl_iw_get_range(
 	if (dev_wlc_intvar_get(dev, "fbt_cap", &fbt_cap) == 0) {
 		if (fbt_cap == WLC_FBT_CAP_DRV_4WAY_AND_REASSOC) {
 			/* Tell the host (e.g. wpa_supplicant) to let driver do the handshake */
-			range->enc_capa |= IW_ENC_CAPA_4WAY_HANDSHAKE;
+//			range->enc_capa |= IW_ENC_CAPA_4WAY_HANDSHAKE;
 		}
 	}
 
@@ -1227,7 +1096,9 @@ wl_iw_set_wap(
 		if ((error = dev_wlc_ioctl(dev, WLC_DISASSOC, &scbval, sizeof(scb_val_t)))) {
 			WL_ERROR(("WLC_DISASSOC failed (%d).\n", error));
 		}
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTING);
+		wl_ext_in4way_sync_wext(dev,
+			STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+			WL_EXT_STATUS_DISCONNECTING, NULL);
 		return 0;
 	}
 	/* WL_ASSOC(("Assoc to %s\n", bcm_ether_ntoa((struct ether_addr *)&(awrq->sa_data),
@@ -1246,7 +1117,8 @@ wl_iw_set_wap(
 		}
 		WL_MSG(dev->name, "join BSSID="MACSTR"\n", MAC2STR((u8 *)awrq->sa_data));
 	}
-	wl_iw_update_connect_status(dev, WL_EXT_STATUS_CONNECTING);
+	wl_ext_in4way_sync_wext(dev, STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY,
+		WL_EXT_STATUS_CONNECTING, NULL);
 
 	return 0;
 }
@@ -1309,7 +1181,9 @@ wl_iw_mlme(
 		WL_ERROR(("Invalid ioctl data.\n"));
 		return error;
 	}
-	wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTING);
+	wl_ext_in4way_sync_wext(dev,
+			STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+			WL_EXT_STATUS_DISCONNECTING, NULL);
 
 	return error;
 }
@@ -1516,12 +1390,16 @@ wl_iw_iscan_set_scan(
 	struct dhd_pub *dhd = dhd_get_pub(dev);
 	wl_wext_info_t *wext_info = NULL;
 	wlc_ssid_t ssid;
+	int err;
 #ifndef WL_ESCAN
 	iscan_info_t *iscan;
 #endif
 
 	DHD_CHECK(dhd, dev);
 	wext_info = dhd->wext_info;
+	err = wl_ext_in4way_sync_wext(dev, STA_NO_SCAN_IN4WAY, WL_EXT_STATUS_SCAN, NULL);
+	if (err)
+		return err;
 #ifdef WL_ESCAN
 	/* default Broadcast scan */
 	memset(&ssid, 0, sizeof(ssid));
@@ -2092,7 +1970,8 @@ wl_iw_set_essid(
 			}
 			WL_MSG(dev->name, "join SSID=\"%s\"\n", ssid.SSID);
 		}
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_CONNECTING);
+		wl_ext_in4way_sync_wext(dev, STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY,
+			WL_EXT_STATUS_CONNECTING, NULL);
 	}
 	/* If essid null then it is "iwconfig <interface> essid off" command */
 	else {
@@ -2103,7 +1982,9 @@ wl_iw_set_essid(
 			WL_ERROR(("WLC_DISASSOC failed (%d).\n", error));
 			return error;
 		}
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTING);
+		wl_ext_in4way_sync_wext(dev,
+			STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+			WL_EXT_STATUS_DISCONNECTING, NULL);
 	}
 	return 0;
 }
@@ -2911,7 +2792,8 @@ wl_iw_set_encodeext(
 		error = dev_wlc_ioctl(dev, WLC_SET_KEY, &key, sizeof(key));
 		if (error)
 			return error;
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_ADD_KEY);
+		wl_ext_in4way_sync_wext(dev, STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY,
+			WL_EXT_STATUS_ADD_KEY, NULL);
 	}
 	return 0;
 }
@@ -3749,8 +3631,11 @@ wl_iw_event(struct net_device *dev, struct wl_wext_info *wext_info,
 		break;
 	case WLC_E_DEAUTH:
 	case WLC_E_DISASSOC:
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTED);
-		WL_MSG(dev->name, "disconnected with "MACSTR", event %d, reason %d\n",
+		wl_ext_in4way_sync_wext(dev,
+			STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+			WL_EXT_STATUS_DISCONNECTED, NULL);
+		WL_MSG_RLMT(dev->name, &e->addr, ETHER_ADDR_LEN,
+			"disconnected with "MACSTR", event %d, reason %d\n",
 			MAC2STR((u8 *)wrqu.addr.sa_data), event_type, reason);
 		break;
 	case WLC_E_DEAUTH_IND:
@@ -3760,7 +3645,9 @@ wl_iw_event(struct net_device *dev, struct wl_wext_info *wext_info,
 			MAC2STR((u8 *)wrqu.addr.sa_data), event_type, reason);
 		bzero(wrqu.addr.sa_data, ETHER_ADDR_LEN);
 		bzero(&extra, ETHER_ADDR_LEN);
-		wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTED);
+		wl_ext_in4way_sync_wext(dev,
+			STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+			WL_EXT_STATUS_DISCONNECTED, NULL);
 		break;
 
 	case WLC_E_LINK:
@@ -3770,7 +3657,9 @@ wl_iw_event(struct net_device *dev, struct wl_wext_info *wext_info,
 				MAC2STR((u8 *)wrqu.addr.sa_data), reason);
 			bzero(wrqu.addr.sa_data, ETHER_ADDR_LEN);
 			bzero(&extra, ETHER_ADDR_LEN);
-			wl_iw_update_connect_status(dev, WL_EXT_STATUS_DISCONNECTED);
+			wl_ext_in4way_sync_wext(dev,
+				STA_NO_SCAN_IN4WAY|STA_NO_BTC_IN4WAY|STA_WAIT_DISCONNECTED,
+				WL_EXT_STATUS_DISCONNECTED, NULL);
 		} else {
 			WL_MSG(dev->name, "Link UP with "MACSTR"\n",
 				MAC2STR((u8 *)wrqu.addr.sa_data));
@@ -3877,7 +3766,7 @@ wl_iw_event(struct net_device *dev, struct wl_wext_info *wext_info,
 		if (cmd == SIOCGIWSCAN) {
 			if ((!iscan) || (iscan->sysioc_pid < 0)) {
 				wireless_send_event(dev, cmd, &wrqu, NULL);
-			};
+			}
 		} else
 #endif
 			wireless_send_event(dev, cmd, &wrqu, extra);
@@ -4317,7 +4206,6 @@ wl_iw_detach(struct net_device *dev, dhd_pub_t *dhdp)
 		iscan->list_hdr = buf;
 	}
 #endif
-	wl_ext_add_remove_pm_enable_work(wext_info, FALSE);
 	wl_ext_event_deregister(dev, dhdp, WLC_E_LAST, wl_iw_event);
 	if (wext_info) {
 		kfree(wext_info);
@@ -4374,8 +4262,6 @@ wl_iw_attach(struct net_device *dev, dhd_pub_t *dhdp)
 		goto exit;
 	}
 #endif
-	mutex_init(&wext_info->pm_sync);
-	INIT_DELAYED_WORK(&wext_info->pm_enable_work, wl_ext_pm_work_handler);
 	ret = wl_ext_event_register(dev, dhdp, WLC_E_LAST, wl_iw_event, dhdp->wext_info,
 		PRIO_EVENT_WEXT);
 	if (ret) {
@@ -4400,7 +4286,6 @@ wl_iw_down(struct net_device *dev, dhd_pub_t *dhdp)
 		WL_ERROR (("dhd is NULL\n"));
 		return;
 	}
-	wl_ext_add_remove_pm_enable_work(wext_info, FALSE);
 }
 
 int

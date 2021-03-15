@@ -89,6 +89,7 @@ typedef struct pkt_statics {
 	uint32	glom_size;
 	uint16	test_count;
 	uint32	test_size;
+	uint32	glom_cnt_us[SDPCM_MAXGLOM_SIZE];
 } pkt_statics_t;
 #endif
 
@@ -176,5 +177,8 @@ extern bool sdioh_gpioin(sdioh_info_t *sd, uint32 gpio);
 extern SDIOH_API_RC sdioh_gpioouten(sdioh_info_t *sd, uint32 gpio);
 extern SDIOH_API_RC sdioh_gpioout(sdioh_info_t *sd, uint32 gpio, bool enab);
 extern uint sdioh_set_mode(sdioh_info_t *sd, uint mode);
+#ifdef PKT_STATICS
+extern uint32 sdioh_get_spend_time(sdioh_info_t *sd);
+#endif
 
 #endif /* _sdio_api_h_ */

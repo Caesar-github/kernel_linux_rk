@@ -79,9 +79,32 @@ typedef struct _compat_android_wifi_priv_cmd {
 #define WL_MSG(name, arg1, args...) \
 	do { \
 		if (android_msg_level & ANDROID_MSG_LEVEL) { \
-			printk(KERN_ERR "[dhd-%s] %s : " arg1, name, __func__, ## args); \
+			printk(KERN_ERR DHD_LOG_PREFIX "[%s] %s : " arg1, name, __func__, ## args); \
 		} \
 	} while (0)
+
+#define WL_MSG_PRINT_RATE_LIMIT_PERIOD 1000000000u /* 1s in units of ns */
+#define WL_MSG_RLMT(name, cmp, size, arg1, args...) \
+do {	\
+	if (android_msg_level & ANDROID_MSG_LEVEL) {	\
+		static uint64 __err_ts = 0; \
+		static uint32 __err_cnt = 0; \
+		uint64 __cur_ts = 0; \
+		static uint8 static_tmp[size]; \
+		__cur_ts = local_clock(); \
+		if (__err_ts == 0 || (__cur_ts > __err_ts && \
+		(__cur_ts - __err_ts > WL_MSG_PRINT_RATE_LIMIT_PERIOD)) || \
+		memcmp(&static_tmp, cmp, size)) { \
+			__err_ts = __cur_ts; \
+			memcpy(static_tmp, cmp, size); \
+			printk(KERN_ERR DHD_LOG_PREFIX "[%s] %s : [%u times] " arg1, \
+				name, __func__, __err_cnt, ## args); \
+			__err_cnt = 0; \
+		} else { \
+			++__err_cnt; \
+		} \
+	}	\
+} while (0)
 
 /**
  * wl_android_init will be called from module init function (dhd_module_init now), similarly
@@ -94,18 +117,33 @@ int wl_android_wifi_on(struct net_device *dev);
 int wl_android_wifi_off(struct net_device *dev, bool on_failure);
 int wl_android_priv_cmd(struct net_device *net, struct ifreq *ifr);
 int wl_handle_private_cmd(struct net_device *net, char *command, u32 cmd_len);
+#ifdef WL_EXT_GENL
+int wl_ext_genl_init(struct net_device *net);
+void wl_ext_genl_deinit(struct net_device *net);
+#endif
 #ifdef WL_EXT_IAPSTA
 int wl_ext_iapsta_attach_netdev(struct net_device *net, int ifidx, uint8 bssidx);
 int wl_ext_iapsta_attach_name(struct net_device *net, int ifidx);
 int wl_ext_iapsta_dettach_netdev(struct net_device *net, int ifidx);
 int wl_ext_iapsta_update_net_device(struct net_device *net, int ifidx);
+#ifdef PROPTX_MAXCOUNT
+void wl_ext_update_wlfc_maxcount(struct dhd_pub *dhd);
+int wl_ext_get_wlfc_maxcount(struct dhd_pub *dhd, int ifidx);
+#endif /* PROPTX_MAXCOUNT */
 int wl_ext_iapsta_alive_preinit(struct net_device *dev);
 int wl_ext_iapsta_alive_postinit(struct net_device *dev);
 int wl_ext_iapsta_attach(dhd_pub_t *pub);
 void wl_ext_iapsta_dettach(dhd_pub_t *pub);
 #ifdef WL_CFG80211
+bool wl_legacy_chip_check(struct net_device *net);
+bool wl_new_chip_check(struct net_device *net);
+bool wl_extsae_chip(struct dhd_pub *dhd);
 u32 wl_ext_iapsta_update_channel(dhd_pub_t *dhd, struct net_device *dev, u32 channel);
 void wl_ext_iapsta_update_iftype(struct net_device *net, int ifidx, int wl_iftype);
+bool wl_ext_iapsta_iftype_enabled(struct net_device *net, int wl_iftype);
+bool wl_ext_iapsta_other_if_enabled(struct net_device *net);
+void wl_ext_iapsta_enable_master_if(struct net_device *dev, bool post);
+void wl_ext_iapsta_restart_master(struct net_device *dev);
 void wl_ext_iapsta_ifadding(struct net_device *net, int ifidx);
 bool wl_ext_iapsta_mesh_creating(struct net_device *net);
 #endif
@@ -144,6 +182,9 @@ bool wl_ext_check_scan(struct net_device *dev, dhd_pub_t *dhdp);
 void wl_ext_user_sync(struct dhd_pub *dhd, int ifidx, bool lock);
 bool wl_ext_event_complete(struct dhd_pub *dhd, int ifidx);
 #endif
+#if defined(WL_CFG80211)
+void wl_ext_bss_iovar_war(struct net_device *dev, s32 *val);
+#endif
 enum wl_ext_status {
 	WL_EXT_STATUS_DISCONNECTING = 0,
 	WL_EXT_STATUS_DISCONNECTED,
@@ -157,6 +198,22 @@ enum wl_ext_status {
 	WL_EXT_STATUS_STA_CONNECTED,
 	WL_EXT_STATUS_AP_DISABLED
 };
+#if defined(WL_EXT_IAPSTA) && defined(WL_CFG80211)
+int wl_ext_in4way_sync(struct net_device *dev, uint action,
+	enum wl_ext_status status, void *context);
+#endif /* WL_EXT_IAPSTA && WL_CFG80211 */
+#if defined(WL_EXT_IAPSTA) && defined(WL_WIRELESS_EXT)
+int wl_ext_in4way_sync_wext(struct net_device *dev, uint action,
+	enum wl_ext_status status, void *context);
+#endif /* WL_EXT_IAPSTA && WL_WIRELESS_EXT */
+#if defined(WL_EXT_IAPSTA)
+void wl_ext_update_eapol_status(dhd_pub_t *dhd, int ifidx,
+	uint eapol_status);
+#else
+static INLINE void wl_ext_update_eapol_status(dhd_pub_t *dhd, int ifidx,
+	uint eapol_status) { }
+#endif /* WL_EXT_IAPSTA */
+
 typedef struct wl_conn_info {
 	uint8 bssidx;
 	wlc_ssid_t ssid;
@@ -295,7 +352,7 @@ extern int g_wifi_on;
 typedef struct wl_rssi_cache {
 	struct wl_rssi_cache *next;
 	int dirty;
-	struct timeval tv;
+	struct osl_timespec tv;
 	struct ether_addr BSSID;
 	int16 RSSI[RSSIAVG_LEN];
 } wl_rssi_cache_t;
@@ -331,7 +388,7 @@ int wl_update_rssi_offset(struct net_device *net, int rssi);
 typedef struct wl_bss_cache {
 	struct wl_bss_cache *next;
 	int dirty;
-	struct timeval tv;
+	struct osl_timespec tv;
 	wl_scan_results_t results;
 } wl_bss_cache_t;
 
@@ -354,7 +411,7 @@ int wl_ext_get_best_channel(struct net_device *net,
 #if defined(BSSCACHE)
 	wl_bss_cache_ctrl_t *bss_cache_ctrl,
 #else
-	struct wl_scan_results *bss_list,
+	wl_scan_results_t *bss_list,
 #endif
 	int ioctl_ver, int *best_2g_ch, int *best_5g_ch
 );

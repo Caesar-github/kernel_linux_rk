@@ -472,7 +472,12 @@ typedef struct dhd_pno_status_info {
 #ifdef GSCAN_SUPPORT
 	wait_queue_head_t batch_get_wait;
 #endif /* GSCAN_SUPPORT */
+#if (LINUX_VERSION_CODE >= KERNEL_VERSION(5, 7, 0))
+	wait_queue_head_t get_batch_done;
+	bool batch_recvd;
+#else
 	struct completion get_batch_done;
+#endif
 	bool wls_supported; /* wifi location service supported or not */
 	enum dhd_pno_status pno_status;
 	enum dhd_pno_mode pno_mode;
