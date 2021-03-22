@@ -977,7 +977,7 @@
 };
 
 &optee {
-	status = "disabled";
+	status = "okay";
 };
 
 &otp {
