@@ -8,8 +8,8 @@ DEFCONFIG=
 model_arm64=(
 	"TB-RK3399ProD  TD03310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prod-linux Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProDs TDs3310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prod-linux Image.rockchip  rockchip_linux_defconfig"
-	"TB-RK3399ProP  TD03310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prop-linux Image.rockchip  rockchip_linux_defconfig"
-	"TB-RK3399ProPs TDs3310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prop-linux Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProP  TP03310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prop-linux Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProPs TPs3310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prop-linux Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProX-x00  TX03310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prox-x00-linux Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProXs-x00 TXs3310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prox-x00-linux Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProX-x01  TX03310 arm64 rk3399pro 0xff1a0000 rk3399pro-toybrick-prox-x01-linux Image.rockchip  rockchip_linux_defconfig"
