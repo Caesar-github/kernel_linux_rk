@@ -258,31 +258,33 @@ static int lt7911d_s_power(struct v4l2_subdev *sd, int on)
 
 static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 {
-        u16 intstatus = 0; // = i2c_rd16(sd, INTSTATUS);
-        unsigned int Hactive=0;  // report to app
+	u16 intstatus = 0; // = i2c_rd16(sd, INTSTATUS);
+	unsigned int Hactive=0;  // report to app
 	unsigned int Vactive=0;  // report to app
-        struct lt7911d *lt7911d = to_lt7911d(sd);
-        struct i2c_client *client = lt7911d->client;
-        const struct v4l2_event lt7911d_ev_fmt = {
-                .type = V4L2_EVENT_SOURCE_CHANGE,
-                .u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
-        };
-
-        //struct device *dev = &os04a10->client->dev;
+	struct lt7911d *lt7911d = to_lt7911d(sd);
+	struct i2c_client *client = lt7911d->client;
+	const struct v4l2_event lt7911d_ev_fmt = {
+		.type = V4L2_EVENT_SOURCE_CHANGE,
+		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
+	};
 	int ret;
-	unsigned char VtotalH,VtotalL;		//Vtotal[11:0]
+	//unsigned char VtotalH,VtotalL;		//Vtotal[11:0]
 	unsigned char VactiveH,VactiveL;	//Vactive[11:0]
-	unsigned char VsyncW,VBP,VFP;		//V blank timing 8bits
+	//unsigned char VsyncW,VBP,VFP;		//V blank timing 8bits
 	
 	//特别注意：H方向的读取Timing等于实际Timing的二分之一
 	//例如读出的Hactived[15:0] = 0x021c，则实际的Hactive=0x021c*2=0x0438=1080
-	unsigned char HtotalH,HtotalL;		//Htotal[15:0]	
+	//unsigned char HtotalH,HtotalL;		//Htotal[15:0]
 	unsigned char HactiveH,HactiveL;	//Hactive[15:0]
+	unsigned char pcrHH, pcrHL, pcrVH, pcrVL;
+	//unsigned char msaHH, msaHL, msaVH, msaVL;
+	unsigned char pll=0, BKD2_17_REG, BKD2_08_REG = 0, BKD2_09_REG;
+	/*
 	unsigned char HsyncWH,HsyncWL;		//HsyncW[11:0]
 	unsigned char HBPH,HBPL;			//HBP[11:0]
 	unsigned char HFPH,HFPL;			//HFP[11:0]
-
-        v4l2_dbg(1, debug, sd, "%s: IntStatus = 0x%04x\n", __func__, intstatus);
+	*/
+	v4l2_dbg(1, debug, sd, "%s: IntStatus = 0x%04x\n", __func__, intstatus);
 
 	//step 1: enable chip IIC, (bank reg is 0xff, bank value is 0x80)
 	ret=lt7911d_write(client,0xFF, 0x80);
@@ -293,34 +295,56 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	//SetRegisterBank(0xd2);
 	//step 1: enable chip IIC, (bank reg is 0xff, bank value is 0xd2)
 	ret=lt7911d_write(client,0xFF, 0xd2);
-	//step 2: offset is 0x83, value is 0x11
-	ret=lt7911d_write(client,0x83, 0x11);
-	usleep_range(40000, 50000);
-       	lt7911d_read(client,0x9e, &VtotalH);//0xd29e[3:0]=Vtotal[11:8]
+	//step 2: offset is 0x83, value is 0x10
+	ret=lt7911d_write(client,0x83, 0x10); // Video source select from dp rx
+	usleep_range(4000, 5000);
+	/*
+	lt7911d_read(client,0x9e, &VtotalH);//0xd29e[3:0]=Vtotal[11:8]
 	lt7911d_read(client,0x9f, &VtotalL);//0xd29f[7:0]=Vtotal[7:0]
-
+	*/
 	lt7911d_read(client,0x96, &VactiveH);//0xd296[3:0]=VactiveH[11:8]
 	lt7911d_read(client,0x97, &VactiveL);//0xd297[7:0]=VactiveH[7:0]
-
+	pcrVH = VactiveH;
+	pcrVL = VactiveL;
+	/*
 	lt7911d_read(client,0x86, &VsyncW);//0xd286[7:0]=VsyncW[7:0]
 	lt7911d_read(client,0x87, &VBP);//0xd287[7:0]=VBP[7:0]
 	lt7911d_read(client,0x88, &VFP);//0xd288[7:0]=VFP[7:0]
 	
 	lt7911d_read(client,0x89, &HtotalH);//0xd289[3:0]=Htotal[15:8]
 	lt7911d_read(client,0x8a, &HtotalL);//0xd28a[7:0]=Htotal[7:0]
+	*/
 	lt7911d_read(client,0x8b, &HactiveH);//0xd28b[3:0]=Hactive[15:8]
 	lt7911d_read(client,0x8c, &HactiveL);//0xd28c[7:0]=Hactive[7:0]
+	pcrHH = HactiveH;
+	pcrHL = HactiveL;
+	lt7911d_read(client,0x08, &BKD2_08_REG);
+	lt7911d_read(client, 0x09, &BKD2_09_REG);
+	lt7911d_read(client,0x17, &BKD2_17_REG);
+	/*
 	lt7911d_read(client,0x94, &HsyncWH);//0xd294[3:0]=HsyncWH[11:8]
 	lt7911d_read(client,0x95, &HsyncWL);//0xd295[7:0]=HsyncWL[7:0]
 	lt7911d_read(client,0x98, &HBPH);//0xd298[3:0]=HBPH[11:8]
 	lt7911d_read(client,0x99, &HBPL);//0xd299[7:0]=HBPL[7:0]
 	lt7911d_read(client,0x9c, &HFPH);//0xd29c[3:0]=HFPH[11:8]
 	lt7911d_read(client,0x9d, &HFPL);//0xd29d[7:0]=HFPL[7:0]
+	*/
+#if 0 //msa
+	ret=lt7911d_write(client,0xFF, 0xd1);
+	usleep_range(4000, 5000);
+	lt7911d_read(client,0xe7, &msaHH);
+	lt7911d_read(client,0xe8, &msaHL);
 
-        //disable IIC 
-        ret=lt7911d_write(client,0xFF, 0x80);
+	lt7911d_read(client,0xe9, &msaVH);
+	lt7911d_read(client,0xea, &msaVL);
+
+	ret=lt7911d_write(client,0xFF, 0xb8);
+	lt7911d_read(client,0xb0, &pll);
+	#endif
+	//disable IIC
+	ret=lt7911d_write(client,0xFF, 0x80);
 	ret=lt7911d_write(client,0xEE, 0x00);
-	
+	/*
 	printk("Vtotal = %d\n", VtotalH<<8|VtotalL);
 	printk("Htotal = %d\n", HtotalH<<8|HtotalL);
 	
@@ -333,45 +357,52 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 
 	printk("HtotalH = 0x%x\n", HtotalH);
 	printk("HtotalL = 0x%x\n\n", HtotalL);
+	*/
+	Hactive =  (HactiveH<<8|HactiveL)*2;
+	Vactive = VactiveH<<8|VactiveL;
+	printk(">> PCR Hactive = %d;Vactive = %d\n\n", Hactive,Vactive);
+	//printk(">> MSA Hactive = %d;Vactive = %d\n\n", msaHH << 8|msaHL,msaVH<<8|msaVL);
+	printk(">> BKD2_17_REG = 0x%x\n", BKD2_17_REG&0x40);
+	printk(">> BKD2_08_REG = 0x%x\n", BKD2_08_REG);
+	printk(">> BKD2_09_REG = 0x%x\n", BKD2_09_REG);
+	printk(">> PLL 0x%x\n", pll);
+	if (ret != 0) {
+		printk("i2c transfer error \n");
+	}
 
-	Hactive =  (HactiveH<<8|HactiveL)*2; Vactive = VactiveH<<8|VactiveL;
-	printk(">> Hactive = %d;Vactive = %d\n\n", Hactive,Vactive);
-
-        if (ret != 0) {
-           printk("i2c transfer error \n");
-        }
-
-        /* handle width and height change event */
-        if (lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
-            struct v4l2_dv_timings timings;
-            struct v4l2_bt_timings *bt = &timings.bt;
-            memset(&timings, 0, sizeof(struct v4l2_dv_timings));
-            timings.type = V4L2_DV_BT_656_1120;
-            if (Hactive == 0 || Vactive == 0) {
-                //workaround way to ensure width and height > 1
-                Hactive = 2;
-                Vactive = 2;
-            }
-            bt->width = Hactive;
-            bt->height = Vactive;
-            printk("current=%d:%d, new = %d:%d\n", lt7911d->timings.bt.width, 
-			lt7911d->timings.bt.height, bt->width, bt->height);
-            lt7911d_s_dv_timings(sd, &timings);
-  	    if (sd->devnode)
-               v4l2_subdev_notify_event(sd, &lt7911d_ev_fmt);
-        }
-        return 0;
+	/* handle width and height change event */
+	if (lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
+	struct v4l2_dv_timings timings;
+	struct v4l2_bt_timings *bt = &timings.bt;
+	memset(&timings, 0, sizeof(struct v4l2_dv_timings));
+	timings.type = V4L2_DV_BT_656_1120;
+	if (Hactive == 0 || Vactive == 0) {
+		//workaround way to ensure width and height > 1
+		Hactive = 2;
+		Vactive = 2;
+	}
+	bt->width = Hactive;
+	bt->height = Vactive;
+	printk("current=%d:%d, new = %d:%d\n", lt7911d->timings.bt.width,
+	lt7911d->timings.bt.height, bt->width, bt->height);
+	lt7911d_s_dv_timings(sd, &timings);
+	if (sd->devnode)
+		v4l2_subdev_notify_event(sd, &lt7911d_ev_fmt);
+	}
+	return 0;
 }
 
 static irqreturn_t lt7911d_irq_handler(int irq, void *dev_id)
 {
-        struct lt7911d *lt7911d = dev_id;
-        //struct device *dev = &lt7911d->client->dev;
-        bool handled = 0;
-    
-        printk("gpio5 interrupt occur\n"); 
-        lt7911d_isr(&lt7911d->subdev, 0, &handled);
-        return handled ? IRQ_HANDLED : IRQ_NONE;
+	struct lt7911d *lt7911d = dev_id;
+	//struct device *dev = &lt7911d->client->dev;
+	bool handled = 0;
+
+	printk("gpio5 interrupt occur\n");
+	gpiod_direction_input(lt7911d->irq_gpio);
+
+	lt7911d_isr(&lt7911d->subdev, 0, &handled);
+	return handled ? IRQ_HANDLED : IRQ_NONE;
 }
 
 static long lt7911d_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
@@ -549,7 +580,7 @@ static int lt7911d_check_device_id(struct lt7911d *lt7911d,
 
 static void lt7911d_power_on(struct lt7911d *lt7911d) {
         struct device *dev = &lt7911d->client->dev;
-
+		usleep_range(1500000, 2000000);
         if (!IS_ERR(lt7911d->power_gpio)) {
            gpiod_direction_output(lt7911d->power_gpio, 0);
            usleep_range(2000, 5000);
@@ -563,7 +594,7 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
         if (!IS_ERR(lt7911d->reset_gpio))
            gpiod_direction_output(lt7911d->reset_gpio, 0);
 
-        usleep_range(500, 1000);
+        usleep_range(1000, 1500);
         /*
          * There is no need to wait for the delay of RC circuit
          * if the reset signal is directly controlled by GPIO.
@@ -572,12 +603,12 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
            gpiod_set_value_cansleep(lt7911d->power_gpio, 1);
            usleep_range(2000, 5000);
         }
-        msleep(200);
+        //msleep(200);
         if (!IS_ERR(lt7911d->reset_gpio)) {
            gpiod_set_value_cansleep(lt7911d->reset_gpio, 1);
            usleep_range(2000, 5000);
         }
-        msleep(300);
+        //msleep(300);
         dev_info(dev, "lt7911d power up \n");
 }
 
@@ -620,7 +651,6 @@ static int lt7911d_probe(struct i2c_client *client,
 					     OF_CAMERA_PINCTRL_STATE_DEFAULT);
 		if (IS_ERR(lt7911d->pins_default))
 			dev_err(dev, "could not get default pinstate\n");
-
 		lt7911d->pins_sleep =
 			pinctrl_lookup_state(lt7911d->pinctrl,
 					     OF_CAMERA_PINCTRL_STATE_SLEEP);
