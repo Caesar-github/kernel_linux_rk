@@ -239,6 +239,14 @@
 		iommus = <&isp1_mmu>;
 		status = "disabled";
 	};
+
+	firmware {
+		optee: optee {
+			compatible = "linaro,optee-tz";
+			method = "smc";
+			status = "okay";
+		};
+	};
 };
 
 &i2c0 {
