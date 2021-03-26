@@ -34,7 +34,7 @@
 };
 
 &pwm3 {
-    status = "disabled";
+    status = "okay";
 };
 
 &u2phy0 {
