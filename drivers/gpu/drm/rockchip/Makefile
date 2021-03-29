@@ -18,8 +18,10 @@ rockchipdrm-$(CONFIG_ROCKCHIP_INNO_HDMI) += inno_hdmi.o
 rockchipdrm-$(CONFIG_ROCKCHIP_LVDS) += rockchip_lvds.o
 rockchipdrm-$(CONFIG_ROCKCHIP_DRM_TVE) += rockchip_drm_tve.o
 rockchipdrm-$(CONFIG_ROCKCHIP_RGB) += rockchip_rgb.o
+rockchipdrm-$(CONFIG_DRM_ROCKCHIP_VVOP) += rockchip_drm_vvop.o
 
 obj-$(CONFIG_DRM_ROCKCHIP) += rockchipdrm.o
 
+obj-$(CONFIG_ROCKCHIP_EBC_DEV) += ebc-dev/
 obj-$(CONFIG_DRM_ROCKCHIP_RK618) += rk618/
 obj-$(CONFIG_DRM_ROCKCHIP_RK628) += rk628/

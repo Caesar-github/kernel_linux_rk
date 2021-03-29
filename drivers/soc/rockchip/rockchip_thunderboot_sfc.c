@@ -12,6 +12,7 @@
 #include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/soc/rockchip/rockchip_decompress.h>
+#include <linux/soc/rockchip/rockchip_thunderboot_crypto.h>
 
 #define SFC_ICLR	0x08
 #define SFC_SR		0x24
@@ -21,7 +22,7 @@
 #define SFC_BUSY	BIT(0)
 
 /* SFC_RAWISR Register */
-#define TRANSS_INT	BIT(4)
+#define DMA_INT		BIT(7)
 
 static int rk_tb_sfc_thread(void *p)
 {
@@ -43,28 +44,38 @@ static int rk_tb_sfc_thread(void *p)
 	rds = of_parse_phandle(dev->of_node, "memory-region-src", 0);
 	rdd = of_parse_phandle(dev->of_node, "memory-region-dst", 0);
 
-	if (readl_poll_timeout(regs + SFC_RAWISR, status,
-			       status & TRANSS_INT, 100,
-			       1000 * USEC_PER_MSEC)) {
-		dev_err(dev, "DMA is still running!\n");
+#ifdef SFC_DEBUG
+	print_hex_dump(KERN_WARNING, "tb_sfc", DUMP_PREFIX_OFFSET, 4, 4, regs, 0x60, 0);
+#endif
+
+	ret = readl_poll_timeout(regs + SFC_SR, status,
+				 !(status & SFC_BUSY), 100,
+				 1000 * USEC_PER_MSEC);
+	if (ret) {
+		dev_err(dev, "Wait for SFC idle timeout!\n");
 		goto out;
 	} else {
-		writel_relaxed(0xFFFFFFFF, regs + SFC_ICLR);
-	}
-
-	if (readl_poll_timeout(regs + SFC_SR, status,
-			       !(status & SFC_BUSY), 100,
-			       100 * USEC_PER_MSEC)) {
-		dev_err(dev, "SFC time out!\n");
-		goto out;
+		if (likely(readl(regs + SFC_RAWISR) & DMA_INT))
+			dev_err(dev, "DMA finished!\n");
+		else
+			dev_err(dev, "Last transfer non DMA!\n");
 	}
 
 	/* Parse ramdisk addr and help start decompressing */
 	if (rds && rdd) {
 		struct resource src, dst;
+		u32 rdk_size = 0;
+		const u32 *digest_org;
 
 		if (of_address_to_resource(rds, 0, &src) >= 0 &&
 		    of_address_to_resource(rdd, 0, &dst) >= 0) {
+			if (IS_ENABLED(CONFIG_ROCKCHIP_THUNDER_BOOT_CRYPTO)) {
+				of_property_read_u32(rds, "size", &rdk_size);
+				digest_org = of_get_property(rds->child, "value", NULL);
+				if (digest_org && rdk_size)
+					rk_tb_sha256((dma_addr_t)src.start, rdk_size,
+						     (void *)digest_org);
+			}
 			/*
 			 * Decompress HW driver will free reserved area of
 			 * memory-region-src.

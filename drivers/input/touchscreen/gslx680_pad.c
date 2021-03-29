@@ -116,6 +116,8 @@ struct gsl_ts {
     int screen_max_x;
     int screen_max_y;
     struct gsl_touch_chip_info *gsl_chip_info;
+    struct work_struct download_fw_work;
+    struct work_struct resume_work;
 };
 
 #ifdef GSL_DEBUG
@@ -255,7 +257,6 @@ static void gsl_load_fw(struct i2c_client *client)
     ptr_fw = ts->gsl_chip_info->ptr_fw;
 
     source_len = ts->gsl_chip_info->ptr_fw_len;
-
     for (source_line = 0; source_line < source_len; source_line++)
     {
         /* init page trans, set the page val */
@@ -359,6 +360,8 @@ static void clr_reg(struct i2c_client *client)
 static void init_chip(struct i2c_client *client)
 {
     int rc;
+    struct gsl_ts *ts = i2c_get_clientdata(client);
+
     gslX680_shutdown_low();
     mdelay(20);
     gslX680_shutdown_high();
@@ -370,12 +373,7 @@ static void init_chip(struct i2c_client *client)
         dev_err(&client->dev, "------gslX680 test_i2c error------\n");
         return;
     }
-    clr_reg(client);
-    reset_chip(client);
-    gsl_load_fw(client);
-    startup_chip(client);
-    reset_chip(client);
-    startup_chip(client);
+    queue_work(ts->wq, &ts->download_fw_work);  
 }
 
 static void check_mem_data(struct i2c_client *client)
@@ -934,6 +932,45 @@ static int gsl_ts_suspend(struct device *dev)
 static int gsl_ts_resume(struct device *dev)
 {
     struct gsl_ts *ts = dev_get_drvdata(dev);
+
+    queue_work(ts->wq, &ts->resume_work);
+
+    return 0;
+}
+
+static int gsl_ts_early_suspend(struct tp_device *tp_d)
+{
+	struct gsl_ts *ts = container_of(tp_d, struct gsl_ts, tp);
+
+	gsl_ts_suspend(&ts->client->dev);
+
+	return 0;
+}
+
+static int gsl_ts_late_resume(struct tp_device *tp_d)
+{
+	struct gsl_ts *ts = container_of(tp_d, struct gsl_ts, tp);
+
+	gsl_ts_resume(&ts->client->dev);
+
+	return 0;
+}
+
+static void gsl_download_fw_work(struct work_struct *work)
+{
+    struct gsl_ts *ts = dev_get_drvdata(&gsl_client->dev);
+
+    clr_reg(ts->client);
+    reset_chip(ts->client);
+    gsl_load_fw(ts->client);
+    startup_chip(ts->client);
+    reset_chip(ts->client);
+    startup_chip(ts->client);
+}
+
+static void  gsl_resume_work(struct work_struct *work)
+{
+    struct gsl_ts *ts = dev_get_drvdata(&gsl_client->dev);
 #ifdef SLEEP_CLEAR_POINT
 #ifdef REPORT_DATA_ANDROID_4_0
     int i;
@@ -941,8 +978,8 @@ static int gsl_ts_resume(struct device *dev)
 #endif
     gslX680_shutdown_high();
     msleep(20);
-    reset_chip(ts->client);
-    startup_chip(ts->client);
+    //reset_chip(ts->client);
+    //startup_chip(ts->client);
     check_mem_data(ts->client);
     check_mem_data(ts->client);
 
@@ -960,7 +997,6 @@ static int gsl_ts_resume(struct device *dev)
     input_sync(ts->input);
 #endif
    enable_irq(ts->irq);
-    return 0;
 }
 
 static int  gsl_ts_probe(struct i2c_client *client,
@@ -1039,6 +1075,9 @@ static int  gsl_ts_probe(struct i2c_client *client,
         dev_info(&ts->client->dev, "irq pin invalid\n");
     }
 
+    INIT_WORK(&ts->download_fw_work, gsl_download_fw_work);
+    INIT_WORK(&ts->resume_work, gsl_resume_work);
+
     gslX680_init();
     rc = gslX680_ts_init(client, ts);
     if (rc < 0) {
@@ -1074,6 +1113,10 @@ static int  gsl_ts_probe(struct i2c_client *client,
 
     gpio_set_value(ts->irq_pin, 0);
     enable_irq(ts->irq);
+
+    ts->tp.tp_resume = gsl_ts_late_resume;
+    ts->tp.tp_suspend = gsl_ts_early_suspend;
+    tp_register_fb(&ts->tp);
 
     return 0;
 
@@ -1114,17 +1157,21 @@ static const struct i2c_device_id gsl_ts_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, gsl_ts_id);
 
+#if !defined(CONFIG_DRM_FBDEV_EMULATION) && defined(CONFIG_PM)
 static const struct dev_pm_ops gsl_pm_ops = {
      .suspend    = gsl_ts_suspend,
      .resume     = gsl_ts_resume,
 };
+#endif
 
 static struct i2c_driver gsl_ts_driver = {
     .driver = {
         .name = GSLX680_I2C_NAME,
         .owner = THIS_MODULE,
         .of_match_table = of_match_ptr(gsl_ts_ids),
+#if !defined(CONFIG_DRM_FBDEV_EMULATION) && defined(CONFIG_PM)
         .pm = &gsl_pm_ops,
+#endif
     },
     .probe		= gsl_ts_probe,
     .remove		= gsl_ts_remove,

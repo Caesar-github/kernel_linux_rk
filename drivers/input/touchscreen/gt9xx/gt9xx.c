@@ -59,6 +59,7 @@
 static u8 m89or101 = TRUE;
 static u8 bgt911 = FALSE;
 static u8 bgt9110 = FALSE;
+static u8 bgt9111 = FALSE;
 static u8 bgt970 = FALSE;
 static u8 bgt910 = FALSE;
 static u8 gtp_change_x2y = TRUE;
@@ -607,7 +608,7 @@ static void goodix_ts_work_func(struct work_struct *work)
     ts = container_of(work, struct goodix_ts_data, work);
     if (ts->enter_update)
     {
-        return;
+        goto release_wakeup_lock;
     }
 #if GTP_GESTURE_WAKEUP
     if (DOZE_ENABLED == doze_status)
@@ -681,7 +682,7 @@ static void goodix_ts_work_func(struct work_struct *work)
         {
             gtp_irq_enable(ts);
         }
-        return;
+        goto release_wakeup_lock;
     }
 #endif
 
@@ -693,7 +694,7 @@ static void goodix_ts_work_func(struct work_struct *work)
         {
             gtp_irq_enable(ts);
         }
-        return;
+        goto release_wakeup_lock;
     }
     
     finger = point_data[GTP_ADDR_LENGTH];
@@ -782,7 +783,7 @@ static void goodix_ts_work_func(struct work_struct *work)
         {
             gtp_irq_enable(ts);
         }
-        return;
+        goto release_wakeup_lock;
     }
 
     if((finger & 0x80) == 0)
@@ -1027,6 +1028,10 @@ exit_work_func:
     {
         gtp_irq_enable(ts);
     }
+
+release_wakeup_lock:
+    if (device_can_wakeup(&ts->client->dev))
+        pm_relax(&ts->client->dev);
 }
 
 /*******************************************************
@@ -1066,6 +1071,9 @@ static irqreturn_t goodix_ts_irq_handler(int irq, void *dev_id)
     GTP_DEBUG_FUNC();
  
     gtp_irq_disable(ts);
+
+    if (device_can_wakeup(&ts->client->dev))
+        pm_stay_awake(&ts->client->dev);
 
     queue_work(goodix_wq, &ts->work);
     
@@ -1448,6 +1456,12 @@ static s32 gtp_init_panel(struct goodix_ts_data *ts)
 	    send_cfg_buf[0] = gtp_dat_gt9110;
 	    cfg_info_len[0] =  CFG_GROUP_LEN(gtp_dat_gt9110);
     }
+
+	if (bgt9111) {
+		send_cfg_buf[0] = gtp_dat_gt9111;
+		cfg_info_len[0] =  CFG_GROUP_LEN(gtp_dat_gt9111);
+	}
+
 	if (bgt970) {
 		send_cfg_buf[0] = gtp_dat_9_7;
 		cfg_info_len[0] = CFG_GROUP_LEN(gtp_dat_9_7);
@@ -2659,6 +2673,12 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
 		gtp_change_x2y = TRUE;
 		gtp_x_reverse = TRUE;
 		gtp_y_reverse = FALSE;
+	} else if (val == 9111) {
+		m89or101 = FALSE;
+		bgt9111 = TRUE;
+		gtp_change_x2y = TRUE;
+		gtp_x_reverse = FALSE;
+		gtp_y_reverse = FALSE;
 	} else if (val == 970) {
 		m89or101 = FALSE;
 		bgt911 = FALSE;
@@ -2782,6 +2802,7 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
         ts->int_trigger_type = GTP_INT_TRIGGER;
     }
     
+    ts->irq_flags = ts->int_trigger_type ? IRQF_TRIGGER_FALLING : IRQF_TRIGGER_RISING;
     // Create proc file system
 	gt91xx_config_proc = proc_create(GT91XX_CONFIG_PROC_FILE, 0664, NULL, &config_proc_ops);
     if (gt91xx_config_proc == NULL)
@@ -2820,7 +2841,13 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
     {
         gtp_irq_enable(ts);
     }
-    
+
+    if (of_property_read_bool(np, "wakeup-source"))
+    {
+        device_init_wakeup(&client->dev, 1);
+        enable_irq_wake(ts->irq);
+    }
+
 #if GTP_CREATE_WR_NODE
     init_wr_node(client);
 #endif
@@ -2832,7 +2859,6 @@ static int goodix_ts_probe(struct i2c_client *client, const struct i2c_device_id
 
 probe_init_error:
     printk("   <%s>_%d  prob error !!!!!!!!!!!!!!!\n", __func__, __LINE__);    
-    tp_unregister_fb(&ts->tp);
     GTP_GPIO_FREE(ts->rst_pin);
     GTP_GPIO_FREE(ts->irq_pin);
 probe_init_error_requireio:

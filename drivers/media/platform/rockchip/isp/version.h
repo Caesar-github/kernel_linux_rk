@@ -68,6 +68,49 @@
  * 1. fix normal merge enable config
  * 2. fix size no update for multi sensor switch
  * 3. dmatx add yuyv format
+ *
+ * v1.2.2:
+ * 1. isp/ispp add lock for multi dev runtime
+ * 2. support output isp/ispp reg on each frame
+ * 3. fix error detected by depmod
+ *
+ * v1.3.0:
+ * 1. capture to different version
+ * 2. add isp21
+ * 3. add rk3568 config
+ * 4. support iq part of isp21
+ * 5. remove hdrtmo to fix crash when connect to yuv sensor
+ * 6. fix enable function of ynr/cnr/bay3d/dhaz/adrc is not correct
+ * 7. fix can not get correct awb rawdata
+ * 8. add get awb data from ddr function
+ * 9. fix frame id error for isp21
+ * 10. config lsc by sram in rdbk mode
+ * 11. add force update to enable dehaze
+ * 12. fix bug of scheduling while atomic
+ * 13. fix setting drc register is not correct
+ * 14. extend line to fix merge bypass bug for isp20
+ * 15. vb2 dma sg for iommu enable
+ * 16. config dmatx to valid buf addr
+ *
+ * v1.4.1:
+ * 1. support motion detection mode
+ * 2. get stats only when meas done is on
+ * 3. fix lsc lut error in start/stop test
+ *
+ * v1.5.1:
+ * 1. support to set format if no streaming
+ * 2. add vb2_rdma_sg_memops to support contiguous page
+ * 3. fix gain buf update
+ * 4. 64 align y size for fbcgain format
+ * 5. add trigger mode ioctl
+ * 6. fix config of clk_dbg
+ * 7. fix path select of cif input
+ * 8. fix mpfbc buf update if readback off
+ * 9. fix array overflow
+ * 10. use force big mode when auto big mode is incorrect
+ * 11. fix extend line with isp input crop case
+ * 12. set lgmean related regs for tmo in hdr isr
+ *
  */
 
 #define RKISP_DRIVER_VERSION RKISP_API_VERSION

@@ -6,6 +6,7 @@
 
 /dts-v1/;
 
+#include "rk3568.dtsi"
 #include "rk3568-evb.dtsi"
 #include "rk3568-android.dtsi"
 
@@ -28,4 +29,19 @@
 
 &usb_host1_ohci {
 	status = "disabled";
+};
+
+&usbdrd_dwc3 {
+	phys = <&u2phy0_otg>;
+	phy-names = "usb2-phy";
+	maximum-speed = "high-speed";
+	snps,dis_u2_susphy_quirk;
+	status = "okay";
+};
+
+&usbhost_dwc3 {
+	phys = <&u2phy1_otg>;
+	phy-names = "usb2-phy";
+	maximum-speed = "high-speed";
+	status = "okay";
 };

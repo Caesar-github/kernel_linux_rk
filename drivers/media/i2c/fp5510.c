@@ -13,7 +13,7 @@
 #include <linux/version.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-device.h>
-#include "rk_vcm_head.h"
+#include <linux/rk_vcm_head.h>
 #include <linux/gpio/consumer.h>
 
 #define DRIVER_VERSION	KERNEL_VERSION(0, 0x01, 0x0)
@@ -54,6 +54,8 @@ struct fp5510_device {
 
 	u32 module_index;
 	const char *module_facing;
+	struct rk_cam_vcm_cfg vcm_cfg;
+	int max_ma;
 };
 
 struct TimeTabel_s {
@@ -482,12 +484,40 @@ static const struct v4l2_subdev_internal_ops fp5510_int_ops = {
 	.close = fp5510_close,
 };
 
+static void fp5510_update_vcm_cfg(struct fp5510_device *dev_vcm)
+{
+	struct i2c_client *client = v4l2_get_subdevdata(&dev_vcm->sd);
+	int cur_dist;
+
+	if (dev_vcm->max_ma == 0) {
+		dev_err(&client->dev, "max current is zero");
+		return;
+	}
+
+	cur_dist = dev_vcm->vcm_cfg.rated_ma - dev_vcm->vcm_cfg.start_ma;
+	cur_dist = cur_dist * FP5510_MAX_REG / dev_vcm->max_ma;
+	dev_vcm->step = (cur_dist + (VCMDRV_MAX_LOG - 1)) / VCMDRV_MAX_LOG;
+	dev_vcm->start_current = dev_vcm->vcm_cfg.start_ma *
+				 FP5510_MAX_REG / dev_vcm->max_ma;
+	dev_vcm->rated_current = dev_vcm->start_current +
+				 VCMDRV_MAX_LOG * dev_vcm->step;
+	dev_vcm->step_mode = dev_vcm->vcm_cfg.step_mode;
+
+	dev_dbg(&client->dev,
+		"vcm_cfg: %d, %d, %d, max_ma %d\n",
+		dev_vcm->vcm_cfg.start_ma,
+		dev_vcm->vcm_cfg.rated_ma,
+		dev_vcm->vcm_cfg.step_mode,
+		dev_vcm->max_ma);
+}
+
 static long fp5510_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 {
-	int ret = 0;
-	struct rk_cam_vcm_tim *vcm_tim;
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct fp5510_device *fp5510_dev = sd_to_fp5510_vcm(sd);
+	struct rk_cam_vcm_tim *vcm_tim;
+	struct rk_cam_vcm_cfg *vcm_cfg;
+	int ret = 0;
 
 	if (cmd == RK_VIDIOC_VCM_TIMEINFO) {
 		vcm_tim = (struct rk_cam_vcm_tim *)arg;
@@ -503,6 +533,19 @@ static long fp5510_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 			vcm_tim->vcm_start_t.tv_usec,
 			vcm_tim->vcm_end_t.tv_sec,
 			vcm_tim->vcm_end_t.tv_usec);
+	} else if (cmd == RK_VIDIOC_GET_VCM_CFG) {
+		vcm_cfg = (struct rk_cam_vcm_cfg *)arg;
+
+		vcm_cfg->start_ma = fp5510_dev->vcm_cfg.start_ma;
+		vcm_cfg->rated_ma = fp5510_dev->vcm_cfg.rated_ma;
+		vcm_cfg->step_mode = fp5510_dev->vcm_cfg.step_mode;
+	} else if (cmd == RK_VIDIOC_SET_VCM_CFG) {
+		vcm_cfg = (struct rk_cam_vcm_cfg *)arg;
+
+		fp5510_dev->vcm_cfg.start_ma = vcm_cfg->start_ma;
+		fp5510_dev->vcm_cfg.rated_ma = vcm_cfg->rated_ma;
+		fp5510_dev->vcm_cfg.step_mode = vcm_cfg->step_mode;
+		fp5510_update_vcm_cfg(fp5510_dev);
 	} else {
 		dev_err(&client->dev,
 			"cmd 0x%x not supported\n", cmd);
@@ -516,10 +559,11 @@ static long fp5510_ioctl(struct v4l2_subdev *sd, unsigned int cmd, void *arg)
 static long fp5510_compat_ioctl32(struct v4l2_subdev *sd,
 	unsigned int cmd, unsigned long arg)
 {
-	struct rk_cam_vcm_tim vcm_tim;
-	struct rk_cam_compat_vcm_tim compat_vcm_tim;
-	struct rk_cam_compat_vcm_tim __user *p32 = compat_ptr(arg);
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
+	struct rk_cam_compat_vcm_tim __user *p32 = compat_ptr(arg);
+	struct rk_cam_compat_vcm_tim compat_vcm_tim;
+	struct rk_cam_vcm_tim vcm_tim;
+	struct rk_cam_vcm_cfg vcm_cfg;
 	long ret;
 
 	if (cmd == RK_VIDIOC_COMPAT_VCM_TIMEINFO) {
@@ -538,6 +582,14 @@ static long fp5510_compat_ioctl32(struct v4l2_subdev *sd,
 			&p32->vcm_end_t.tv_sec);
 		put_user(compat_vcm_tim.vcm_end_t.tv_usec,
 			&p32->vcm_end_t.tv_usec);
+	} else if (cmd == RK_VIDIOC_GET_VCM_CFG) {
+		ret = fp5510_ioctl(sd, RK_VIDIOC_GET_VCM_CFG, &vcm_cfg);
+		if (!ret)
+			ret = copy_to_user(up, &vcm_cfg, sizeof(vcm_cfg));
+	} else if (cmd == RK_VIDIOC_SET_VCM_CFG) {
+		ret = copy_from_user(&vcm_cfg, up, sizeof(vcm_cfg));
+		if (!ret)
+			ret = fp5510_ioctl(sd, cmd, &vcm_cfg);
 	} else {
 		dev_err(&client->dev,
 			"cmd 0x%x not supported\n", cmd);
@@ -590,28 +642,36 @@ static int fp5510_probe(struct i2c_client *client,
 	struct device_node *np = of_node_get(client->dev.of_node);
 	struct fp5510_device *fp5510_dev;
 	struct device *dev = &client->dev;
-	int ret;
-	int current_distance;
-	unsigned int start_current;
-	unsigned int rated_current;
-	unsigned int step_mode;
+	unsigned int max_ma, start_ma, rated_ma, step_mode;
 	struct v4l2_subdev *sd;
 	char facing[2];
 	unsigned char data = 0x0;
+	int ret;
 
 	dev_info(&client->dev, "probing...\n");
 	if (of_property_read_u32(np,
+		OF_CAMERA_VCMDRV_MAX_CURRENT,
+		(unsigned int *)&max_ma)) {
+		max_ma = FP5510_MAX_CURRENT;
+		dev_info(&client->dev,
+			"could not get module %s from dts!\n",
+			OF_CAMERA_VCMDRV_MAX_CURRENT);
+	}
+	if (max_ma == 0)
+		max_ma = FP5510_MAX_CURRENT;
+
+	if (of_property_read_u32(np,
 		OF_CAMERA_VCMDRV_START_CURRENT,
-		(unsigned int *)&start_current)) {
-		start_current = FP5510_DEFAULT_START_CURRENT;
+		(unsigned int *)&start_ma)) {
+		start_ma = FP5510_DEFAULT_START_CURRENT;
 		dev_info(&client->dev,
 			"could not get module %s from dts!\n",
 			OF_CAMERA_VCMDRV_START_CURRENT);
 	}
 	if (of_property_read_u32(np,
 		OF_CAMERA_VCMDRV_RATED_CURRENT,
-		(unsigned int *)&rated_current)) {
-		rated_current = FP5510_DEFAULT_RATED_CURRENT;
+		(unsigned int *)&rated_ma)) {
+		rated_ma = FP5510_DEFAULT_RATED_CURRENT;
 		dev_info(&client->dev,
 			"could not get module %s from dts!\n",
 			OF_CAMERA_VCMDRV_RATED_CURRENT);
@@ -675,17 +735,11 @@ static int fp5510_probe(struct i2c_client *client,
 	if (ret)
 		dev_err(&client->dev, "v4l2 async register subdev failed\n");
 
-	current_distance = rated_current - start_current;
-	current_distance = current_distance * FP5510_MAX_REG /
-						FP5510_MAX_CURRENT;
-	fp5510_dev->step = (current_distance + (VCMDRV_MAX_LOG - 1)) /
-						VCMDRV_MAX_LOG;
-	fp5510_dev->start_current = start_current * FP5510_MAX_REG /
-						FP5510_MAX_CURRENT;
-	fp5510_dev->rated_current = fp5510_dev->start_current +
-						VCMDRV_MAX_LOG *
-						fp5510_dev->step;
-	fp5510_dev->step_mode     = step_mode;
+	fp5510_dev->max_ma = max_ma;
+	fp5510_dev->vcm_cfg.start_ma = start_ma;
+	fp5510_dev->vcm_cfg.rated_ma = rated_ma;
+	fp5510_dev->vcm_cfg.step_mode = step_mode;
+	fp5510_update_vcm_cfg(fp5510_dev);
 	fp5510_dev->move_ms       = 0;
 	fp5510_dev->current_related_pos = VCMDRV_MAX_LOG;
 	fp5510_dev->start_move_tv = ns_to_timeval(ktime_get_ns());
@@ -761,6 +815,7 @@ static int fp5510_vcm_resume(struct device *dev)
 	struct fp5510_device *fp5510_dev = sd_to_fp5510_vcm(sd);
 
 	__fp5510_power_on(fp5510_dev);
+	fp5510_set_pos(fp5510_dev, fp5510_dev->current_related_pos);
 
 	return 0;
 }

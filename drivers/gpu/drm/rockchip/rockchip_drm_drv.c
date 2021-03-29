@@ -58,7 +58,11 @@
  *
  **********************************************************************/
 
+#if IS_ENABLED(CONFIG_DRM_ROCKCHIP_VVOP)
+static bool is_support_iommu = false;
+#else
 static bool is_support_iommu = true;
+#endif
 static struct drm_driver rockchip_drm_driver;
 
 struct rockchip_drm_mode_set {
@@ -713,6 +717,7 @@ static int setup_initial_state(struct drm_device *drm_dev,
 		if (ret)
 			goto error_conn;
 
+		mode->picture_aspect_ratio = HDMI_PICTURE_ASPECT_NONE;
 		ret = drm_atomic_set_mode_for_crtc(crtc_state, mode);
 		if (ret)
 			goto error_conn;
@@ -2094,8 +2099,10 @@ static int rockchip_drm_platform_probe(struct platform_device *pdev)
 	int ret;
 
 	ret = rockchip_drm_platform_of_probe(dev);
+#if !IS_ENABLED(CONFIG_DRM_ROCKCHIP_VVOP)
 	if (ret)
 		return ret;
+#endif
 
 	match = rockchip_drm_match_add(dev);
 	if (IS_ERR(match))
@@ -2106,6 +2113,7 @@ static int rockchip_drm_platform_probe(struct platform_device *pdev)
 		rockchip_drm_match_remove(dev);
 		return ret;
 	}
+	dev->coherent_dma_mask = DMA_BIT_MASK(64);
 
 	return 0;
 }
@@ -2155,6 +2163,9 @@ static int __init rockchip_drm_init(void)
 	int ret;
 
 	num_rockchip_sub_drivers = 0;
+#if IS_ENABLED(CONFIG_DRM_ROCKCHIP_VVOP)
+	ADD_ROCKCHIP_SUB_DRIVER(vvop_platform_driver, CONFIG_DRM_ROCKCHIP_VVOP);
+#else
 	ADD_ROCKCHIP_SUB_DRIVER(vop_platform_driver, CONFIG_DRM_ROCKCHIP);
 	ADD_ROCKCHIP_SUB_DRIVER(vop2_platform_driver, CONFIG_DRM_ROCKCHIP);
 	ADD_ROCKCHIP_SUB_DRIVER(rockchip_lvds_driver,
@@ -2170,7 +2181,7 @@ static int __init rockchip_drm_init(void)
 	ADD_ROCKCHIP_SUB_DRIVER(rockchip_tve_driver,
 				CONFIG_ROCKCHIP_DRM_TVE);
 	ADD_ROCKCHIP_SUB_DRIVER(rockchip_rgb_driver, CONFIG_ROCKCHIP_RGB);
-
+#endif
 	ret = platform_register_drivers(rockchip_sub_drivers,
 					num_rockchip_sub_drivers);
 	if (ret)

@@ -43,8 +43,11 @@
 #define dev_pm_opp_find_freq_floor opp_find_freq_floor
 #endif /* Linux >= 3.13 */
 
+#include <soc/rockchip/rockchip_ipa.h>
 #include <soc/rockchip/rockchip_opp_select.h>
 #include <soc/rockchip/rockchip_system_monitor.h>
+
+static struct devfreq_simple_ondemand_data ondemand_data;
 
 static struct monitor_dev_profile mali_mdevp = {
 	.type = MONITOR_TPYE_DEV,
@@ -319,8 +322,22 @@ static int kbase_devfreq_init_core_mask_table(struct kbase_device *kbdev)
 	return 0;
 }
 
+static unsigned long kbase_devfreq_get_static_power(struct devfreq *devfreq,
+						    unsigned long voltage)
+{
+	struct device *dev = devfreq->dev.parent;
+	struct kbase_device *kbdev = dev_get_drvdata(dev);
+
+	return rockchip_ipa_get_static_power(kbdev->model_data, voltage);
+}
+
+static struct devfreq_cooling_power kbase_cooling_power = {
+	.get_static_power = &kbase_devfreq_get_static_power,
+};
+
 int kbase_devfreq_init(struct kbase_device *kbdev)
 {
+	struct device_node *np = kbdev->dev->of_node;
 	struct devfreq_dev_profile *dp;
 	struct dev_pm_opp *opp;
 	unsigned long opp_rate;
@@ -349,9 +366,12 @@ int kbase_devfreq_init(struct kbase_device *kbdev)
 	err = kbase_devfreq_init_core_mask_table(kbdev);
 	if (err)
 		return err;
-
+	of_property_read_u32(np, "upthreshold",
+			     &ondemand_data.upthreshold);
+	of_property_read_u32(np, "downdifferential",
+			     &ondemand_data.downdifferential);
 	kbdev->devfreq = devfreq_add_device(kbdev->dev, dp,
-				"simple_ondemand", NULL);
+				"simple_ondemand", &ondemand_data);
 	if (IS_ERR(kbdev->devfreq)) {
 		kbase_devfreq_term_freq_table(kbdev);
 		return PTR_ERR(kbdev->devfreq);
@@ -382,22 +402,53 @@ int kbase_devfreq_init(struct kbase_device *kbdev)
 		kbdev->mdev_info = NULL;
 	}
 #ifdef CONFIG_DEVFREQ_THERMAL
-	err = kbase_ipa_init(kbdev);
-	if (err) {
-		dev_err(kbdev->dev, "IPA initialization failed\n");
-		goto cooling_failed;
-	}
+	if (of_find_compatible_node(kbdev->dev->of_node, NULL,
+				    "simple-power-model")) {
+		of_property_read_u32(kbdev->dev->of_node,
+				     "dynamic-power-coefficient",
+				     (u32 *)&kbase_dcp->dyn_power_coeff);
+		kbdev->model_data = rockchip_ipa_power_model_init(kbdev->dev,
+								  "gpu_leakage");
+		if (IS_ERR_OR_NULL(kbdev->model_data)) {
+			kbdev->model_data = NULL;
+			dev_err(kbdev->dev, "failed to initialize power model\n");
+		} else if (kbdev->model_data->dynamic_coefficient) {
+			kbase_dcp->dyn_power_coeff =
+				kbdev->model_data->dynamic_coefficient;
+		}
+		if (!kbase_dcp->dyn_power_coeff) {
+			dev_err(kbdev->dev, "failed to get dynamic-coefficient\n");
+			err = -EINVAL;
+			goto cooling_failed;
+		}
 
-	kbdev->devfreq_cooling = of_devfreq_cooling_register_power(
-			kbdev->dev->of_node,
-			kbdev->devfreq,
-			&kbase_ipa_power_model_ops);
-	if (IS_ERR_OR_NULL(kbdev->devfreq_cooling)) {
-		err = PTR_ERR(kbdev->devfreq_cooling);
-		dev_err(kbdev->dev,
-			"Failed to register cooling device (%d)\n",
-			err);
-		goto cooling_failed;
+		kbdev->devfreq_cooling =
+			of_devfreq_cooling_register_power(kbdev->dev->of_node,
+							  kbdev->devfreq,
+							  kbase_dcp);
+		if (IS_ERR(kbdev->devfreq_cooling)) {
+			dev_err(kbdev->dev, "failed to register cooling device\n");
+			err = PTR_ERR(kbdev->devfreq_cooling);
+			goto cooling_failed;
+		}
+	} else {
+		err = kbase_ipa_init(kbdev);
+		if (err) {
+			dev_err(kbdev->dev, "IPA initialization failed\n");
+			goto cooling_failed;
+		}
+
+		kbdev->devfreq_cooling = of_devfreq_cooling_register_power(
+				kbdev->dev->of_node,
+				kbdev->devfreq,
+				&kbase_ipa_power_model_ops);
+		if (IS_ERR(kbdev->devfreq_cooling)) {
+			err = PTR_ERR(kbdev->devfreq_cooling);
+			dev_err(kbdev->dev,
+				"Failed to register cooling device (%d)\n",
+				err);
+			goto cooling_failed;
+		}
 	}
 #endif
 
@@ -427,7 +478,9 @@ void kbase_devfreq_term(struct kbase_device *kbdev)
 	if (kbdev->devfreq_cooling)
 		devfreq_cooling_unregister(kbdev->devfreq_cooling);
 
-	kbase_ipa_term(kbdev);
+	if (!kbdev->model_data)
+		kbase_ipa_term(kbdev);
+	kfree(kbdev->model_data);
 #endif
 
 	devfreq_unregister_opp_notifier(kbdev->dev, kbdev->devfreq);

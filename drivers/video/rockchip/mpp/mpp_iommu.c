@@ -19,6 +19,7 @@
 #include <linux/of_platform.h>
 #include <linux/kref.h>
 #include <linux/slab.h>
+#include <linux/pm_runtime.h>
 
 #include "mpp_debug.h"
 #include "mpp_iommu.h"
@@ -124,7 +125,7 @@ int mpp_dma_release_fd(struct mpp_dma_session *dma, int fd)
 }
 
 struct mpp_dma_buffer *
-mpp_dma_alloc(struct mpp_dma_session *dma, size_t size)
+mpp_dma_alloc(struct device *dev, size_t size)
 {
 	size_t align_size;
 	dma_addr_t iova;
@@ -135,15 +136,13 @@ mpp_dma_alloc(struct mpp_dma_session *dma, size_t size)
 		return NULL;
 
 	align_size = PAGE_ALIGN(size);
-	buffer->vaddr = dma_alloc_coherent(dma->dev,
-					   align_size,
-					   &iova,
-					   GFP_KERNEL);
+	buffer->vaddr = dma_alloc_coherent(dev, align_size, &iova, GFP_KERNEL);
 	if (!buffer->vaddr)
 		goto fail_dma_alloc;
 
-	buffer->size = PAGE_ALIGN(size);
+	buffer->size = align_size;
 	buffer->iova = iova;
+	buffer->dev = dev;
 
 	return buffer;
 fail_dma_alloc:
@@ -151,14 +150,15 @@ fail_dma_alloc:
 	return NULL;
 }
 
-int mpp_dma_free(struct mpp_dma_session *dma,
-		 struct mpp_dma_buffer *buffer)
+int mpp_dma_free(struct mpp_dma_buffer *buffer)
 {
-	dma_free_coherent(dma->dev, buffer->size,
-			  buffer->vaddr, buffer->iova);
+	dma_free_coherent(buffer->dev, buffer->size,
+			buffer->vaddr, buffer->iova);
 	buffer->vaddr = NULL;
 	buffer->iova = 0;
 	buffer->size = 0;
+	buffer->dev = NULL;
+	kfree(buffer);
 
 	return 0;
 }
@@ -553,6 +553,31 @@ int mpp_iommu_disable(struct mpp_rk_iommu *iommu)
 			       iommu->bases[i] + RK_MMU_COMMAND);
 		udelay(2);
 	}
+
+	return 0;
+}
+
+int mpp_iommu_refresh(struct mpp_iommu_info *info, struct device *dev)
+{
+	int i;
+	int usage_count;
+	struct device_link *link;
+	struct device *iommu_dev = &info->pdev->dev;
+
+	rcu_read_lock();
+
+	usage_count = atomic_read(&iommu_dev->power.usage_count);
+	list_for_each_entry_rcu(link, &dev->links.suppliers, c_node) {
+		for (i = 0; i < usage_count; i++)
+			pm_runtime_put_sync(link->supplier);
+	}
+
+	list_for_each_entry_rcu(link, &dev->links.suppliers, c_node) {
+		for (i = 0; i < usage_count; i++)
+			pm_runtime_get_sync(link->supplier);
+	}
+
+	rcu_read_unlock();
 
 	return 0;
 }

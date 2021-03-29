@@ -67,8 +67,20 @@ static char rkisp_version[RKISP_VERNO_LEN];
 module_param_string(version, rkisp_version, RKISP_VERNO_LEN, 0444);
 MODULE_PARM_DESC(version, "version number");
 
+u64 rkisp_debug_reg = 0xFFFFFFFFFLL;
+module_param_named(debug_reg, rkisp_debug_reg, ullong, 0644);
+MODULE_PARM_DESC(debug_reg, "rkisp debug register");
+
 static DEFINE_MUTEX(rkisp_dev_mutex);
 static LIST_HEAD(rkisp_device_list);
+
+void rkisp_set_clk_rate(struct clk *clk, unsigned long rate)
+{
+	if (rkisp_clk_dbg)
+		return;
+
+	clk_set_rate(clk, rate);
+}
 
 static int __maybe_unused __rkisp_clr_unready_dev(void)
 {
@@ -150,9 +162,6 @@ static int __isp_pipeline_s_isp_clk(struct rkisp_pipeline *p)
 	u64 data_rate;
 	int i;
 
-	if (rkisp_clk_dbg)
-		return 0;
-
 	if (dev->isp_inp & (INP_RAWRD0 | INP_RAWRD1 | INP_RAWRD2 | INP_CIF)) {
 		for (i = 0; i < hw_dev->num_clk_rate_tbl; i++) {
 			if (w <= hw_dev->clk_rate_tbl[i].refer_data)
@@ -165,9 +174,8 @@ static int __isp_pipeline_s_isp_clk(struct rkisp_pipeline *p)
 		goto end;
 	}
 
-	if (dev->isp_inp == INP_DMARX_ISP) {
-		if (dev->hw_dev->clks[0])
-			clk_set_rate(hw_dev->clks[0], 400 * 1000000UL);
+	if (dev->isp_inp == INP_DMARX_ISP && dev->hw_dev->clks[0]) {
+		rkisp_set_clk_rate(hw_dev->clks[0], 400 * 1000000UL);
 		return 0;
 	}
 
@@ -207,7 +215,7 @@ static int __isp_pipeline_s_isp_clk(struct rkisp_pipeline *p)
 		i--;
 end:
 	/* set isp clock rate */
-	clk_set_rate(hw_dev->clks[0], hw_dev->clk_rate_tbl[i].clk_rate * 1000000UL);
+	rkisp_set_clk_rate(hw_dev->clks[0], hw_dev->clk_rate_tbl[i].clk_rate * 1000000UL);
 	dev_dbg(hw_dev->dev, "set isp clk = %luHz\n", clk_get_rate(hw_dev->clks[0]));
 
 	return 0;
@@ -266,16 +274,16 @@ static int rkisp_pipeline_set_stream(struct rkisp_pipeline *p, bool on)
 			enable_irq(dev->vs_irq);
 		rockchip_set_system_status(SYS_STATUS_ISP);
 		v4l2_subdev_call(&dev->isp_sdev.sd, video, s_stream, true);
-	}
-
-	/* phy -> sensor */
-	for (i = 0; i < p->num_subdevs; ++i) {
-		ret = v4l2_subdev_call(p->subdevs[i], video, s_stream, on);
-		if (on && ret < 0 && ret != -ENOIOCTLCMD && ret != -ENODEV)
-			goto err_stream_off;
-	}
-
-	if (!on) {
+		/* phy -> sensor */
+		for (i = 0; i < p->num_subdevs; ++i) {
+			ret = v4l2_subdev_call(p->subdevs[i], video, s_stream, on);
+			if (on && ret < 0 && ret != -ENOIOCTLCMD && ret != -ENODEV)
+				goto err_stream_off;
+		}
+	} else {
+		/* sensor -> phy */
+		for (i = p->num_subdevs - 1; i >= 0; --i)
+			v4l2_subdev_call(p->subdevs[i], video, s_stream, on);
 		if (dev->vs_irq >= 0)
 			disable_irq(dev->vs_irq);
 		v4l2_subdev_call(&dev->isp_sdev.sd, video, s_stream, false);
@@ -656,22 +664,26 @@ static int rkisp_get_reserved_mem(struct rkisp_device *isp_dev)
 	/* Get reserved memory region from Device-tree */
 	np = of_parse_phandle(dev->of_node, "memory-region-thunderboot", 0);
 	if (!np) {
-		dev_err(dev, "No %s specified\n", "memory-region-thunderboot");
-		return -1;
+		dev_info(dev, "No memory-region-thunderboot specified\n");
+		return 0;
 	}
 
 	ret = of_address_to_resource(np, 0, &r);
 	if (ret) {
 		dev_err(dev, "No memory address assigned to the region\n");
-		return -1;
+		return ret;
 	}
 
 	isp_dev->resmem_pa = r.start;
 	isp_dev->resmem_size = resource_size(&r);
+	isp_dev->resmem_addr = dma_map_single(dev, phys_to_virt(r.start),
+					      sizeof(struct rkisp_thunderboot_resmem_head),
+					      DMA_BIDIRECTIONAL);
+	ret = dma_mapping_error(dev, isp_dev->resmem_addr);
+
 	dev_info(dev, "Allocated reserved memory, paddr: 0x%x\n",
 		(u32)isp_dev->resmem_pa);
-
-	return 0;
+	return ret;
 }
 
 static int rkisp_plat_probe(struct platform_device *pdev)
@@ -691,7 +703,7 @@ static int rkisp_plat_probe(struct platform_device *pdev)
 	isp_dev = devm_kzalloc(dev, sizeof(*isp_dev), GFP_KERNEL);
 	if (!isp_dev)
 		return -ENOMEM;
-	isp_dev->sw_base_addr = devm_kzalloc(dev, ISP_SW_MAX_SIZE, GFP_KERNEL);
+	isp_dev->sw_base_addr = devm_kzalloc(dev, RKISP_ISP_SW_MAX_SIZE, GFP_KERNEL);
 	if (!isp_dev->sw_base_addr)
 		return -ENOMEM;
 
@@ -709,7 +721,10 @@ static int rkisp_plat_probe(struct platform_device *pdev)
 	sprintf(isp_dev->name, "%s%d",
 		DRIVER_NAME, isp_dev->dev_id);
 
-	rkisp_get_reserved_mem(isp_dev);
+	ret = rkisp_get_reserved_mem(isp_dev);
+	if (ret)
+		return ret;
+
 	mutex_init(&isp_dev->apilock);
 	mutex_init(&isp_dev->iqlock);
 	atomic_set(&isp_dev->pipe.power_cnt, 0);

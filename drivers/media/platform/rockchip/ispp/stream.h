@@ -14,6 +14,7 @@ struct rkispp_stream;
  * STREAM_S0: scale0 output
  * STREAM_S1: scale1 output
  * STREAM_S2: scale2 output
+ * STREAM_VIR: virtual output for debug
  */
 enum rkispp_stream_id {
 	STREAM_II = 0,
@@ -21,6 +22,7 @@ enum rkispp_stream_id {
 	STREAM_S0,
 	STREAM_S1,
 	STREAM_S2,
+	STREAM_VIR,
 	STREAM_MAX
 };
 
@@ -90,14 +92,18 @@ struct tnr_module {
 	struct in_tnr_buf buf;
 	struct list_head list_rd;
 	struct list_head list_wr;
+	struct list_head list_rpt;
 	spinlock_t buf_lock;
 	struct rkisp_ispp_buf *cur_rd;
 	struct rkisp_ispp_buf *nxt_rd;
 	struct rkisp_ispp_buf *cur_wr;
+	struct rkisp_ispp_reg *reg_buf;
 	struct frame_debug_info dbg;
 	u32 uv_offset;
 	bool is_end;
 	bool is_3to1;
+	bool is_but_init;
+	bool is_trigger;
 };
 
 struct nr_module {
@@ -107,6 +113,7 @@ struct nr_module {
 	spinlock_t buf_lock;
 	struct rkisp_ispp_buf *cur_rd;
 	struct rkispp_dummy_buffer *cur_wr;
+	struct rkisp_ispp_reg *reg_buf;
 	struct frame_debug_info dbg;
 	u32 uv_offset;
 	bool is_end;
@@ -115,18 +122,11 @@ struct nr_module {
 struct fec_module {
 	struct list_head list_rd;
 	struct rkispp_dummy_buffer *cur_rd;
+	struct rkisp_ispp_reg *reg_buf;
 	struct frame_debug_info dbg;
 	spinlock_t buf_lock;
 	u32 uv_offset;
 	bool is_end;
-};
-
-/* fec internal using buf */
-struct in_fec_buf {
-	struct rkispp_dummy_buffer mesh_xint;
-	struct rkispp_dummy_buffer mesh_yint;
-	struct rkispp_dummy_buffer mesh_xfra;
-	struct rkispp_dummy_buffer mesh_yfra;
 };
 
 /* struct rkispp_stream - ISPP stream video device
@@ -150,7 +150,6 @@ struct rkispp_stream {
 
 	struct list_head buf_queue;
 	struct rkispp_buffer *curr_buf;
-	struct rkispp_buffer *next_buf;
 	wait_queue_head_t done;
 	spinlock_t vbq_lock;
 
@@ -162,11 +161,14 @@ struct rkispp_stream {
 	struct frame_debug_info dbg;
 
 	u8 last_module;
+	u8 conn_id;
 	bool streaming;
 	bool stopping;
 	bool linked;
 	bool is_upd;
 	bool is_cfg;
+	bool is_end;
+	bool is_reg_withstream;
 };
 
 enum {
@@ -197,6 +199,13 @@ struct rkispp_monitor {
 	bool is_en;
 };
 
+struct rkispp_vir_cpy {
+	struct work_struct work;
+	struct completion cmpl;
+	struct list_head queue;
+	struct rkispp_stream *stream;
+};
+
 /* rkispp stream device */
 struct rkispp_stream_vdev {
 	struct rkispp_stream stream[STREAM_MAX];
@@ -206,11 +215,18 @@ struct rkispp_stream_vdev {
 	struct fec_module fec;
 	struct frame_debug_info dbg;
 	struct rkispp_monitor monitor;
+	struct rkispp_vir_cpy vir_cpy;
+	struct rkisp_ispp_buf input[VIDEO_MAX_FRAME];
 	atomic_t refcnt;
 	u32 module_ens;
 	u32 irq_ends;
 };
 
+int rkispp_get_tnrbuf_fd(struct rkispp_device *dev, struct rkispp_buf_idxfd *idxfd);
+void rkispp_sendbuf_to_nr(struct rkispp_device *dev,
+			  struct rkispp_tnr_inf *tnr_inf);
+void rkispp_set_trigger_mode(struct rkispp_device *dev,
+			     struct rkispp_trigger_mode *mode);
 void rkispp_module_work_event(struct rkispp_device *dev,
 			      void *buf_rd, void *buf_wr,
 			      u32 module, bool is_isr);

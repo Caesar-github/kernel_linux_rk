@@ -39,6 +39,7 @@ int rkisp_fcc_xysubs(u32 fcc, u32 *xsubs, u32 *ysubs)
 	case V4L2_PIX_FMT_YUYV:
 	case V4L2_PIX_FMT_YVYU:
 	case V4L2_PIX_FMT_VYUY:
+	case V4L2_PIX_FMT_UYVY:
 	case V4L2_PIX_FMT_YUV422P:
 	case V4L2_PIX_FMT_NV16:
 	case V4L2_PIX_FMT_NV61:
@@ -52,6 +53,7 @@ int rkisp_fcc_xysubs(u32 fcc, u32 *xsubs, u32 *ysubs)
 	case V4L2_PIX_FMT_NV12M:
 	case V4L2_PIX_FMT_YUV420:
 	case V4L2_PIX_FMT_YVU420:
+	case V4L2_PIX_FMT_FBCG:
 		*xsubs = 2;
 		*ysubs = 2;
 		break;
@@ -383,6 +385,17 @@ static const struct capture_fmt sp_fmts[] = {
 		.mplanes = 1,
 		.write_format = MI_CTRL_SP_WRITE_PLA,
 		.output_format = MI_CTRL_SP_OUTPUT_RGB565,
+	},
+	/* fbcg */
+	{
+		.fourcc = V4L2_PIX_FMT_FBCG,
+		.fmt_type = FMT_FBCGAIN,
+		.bpp = { 8, 16 },
+		.cplanes = 2,
+		.mplanes = 2,
+		.uv_swap = 0,
+		.write_format = MI_CTRL_SP_WRITE_SPLA,
+		.output_format = MI_CTRL_SP_OUTPUT_YUV420,
 	}
 };
 
@@ -439,6 +452,7 @@ struct stream_config rkisp_mp_stream_config = {
 		.y_offs_cnt_init = CIF_MI_MP_Y_OFFS_CNT_INIT,
 		.cb_offs_cnt_init = CIF_MI_MP_CB_OFFS_CNT_INIT,
 		.cr_offs_cnt_init = CIF_MI_MP_CR_OFFS_CNT_INIT,
+		.y_base_ad_shd = CIF_MI_MP_Y_BASE_AD_SHD,
 	},
 };
 
@@ -495,6 +509,7 @@ struct stream_config rkisp_sp_stream_config = {
 		.y_offs_cnt_init = CIF_MI_SP_Y_OFFS_CNT_INIT,
 		.cb_offs_cnt_init = CIF_MI_SP_CB_OFFS_CNT_INIT,
 		.cr_offs_cnt_init = CIF_MI_SP_CR_OFFS_CNT_INIT,
+		.y_base_ad_shd = CIF_MI_SP_Y_BASE_AD_SHD,
 	},
 };
 
@@ -599,9 +614,15 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 			height = pixm->height / ysubs;
 		}
 
+		if (dev->isp_ver == ISP_V20 &&
+		    fmt->fmt_type == FMT_BAYER &&
+		    stream->id == RKISP_STREAM_DMATX2)
+			height += RKMODULE_EXTEND_LINE;
+
 		if ((dev->isp_ver == ISP_V20 ||
 		     dev->isp_ver == ISP_V21) &&
 		    !dev->csi_dev.memory &&
+		    fmt->fmt_type == FMT_BAYER &&
 		    stream->id != RKISP_STREAM_MP &&
 		    stream->id != RKISP_STREAM_SP)
 			/* compact mode need bytesperline 4byte align */
@@ -615,6 +636,10 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 
 		plane_fmt->sizeimage = plane_fmt->bytesperline * height;
 
+		/* uv address is y size offset need 64 align */
+		if (fmt->fmt_type == FMT_FBCGAIN && i == 0)
+			plane_fmt->sizeimage = ALIGN(plane_fmt->sizeimage, 64);
+
 		imagsize += plane_fmt->sizeimage;
 	}
 
@@ -622,10 +647,10 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 	 * it's important since we want to unify none-MPLANE
 	 * and MPLANE.
 	 */
-	if (fmt->mplanes == 1)
+	if (fmt->mplanes == 1 || fmt->fmt_type == FMT_FBCGAIN)
 		pixm->plane_fmt[0].sizeimage = imagsize;
 
-	if (!try) {
+	if (!try && !stream->start_stream && !stream->streaming) {
 		stream->out_isp_fmt = *fmt;
 		stream->out_fmt = *pixm;
 
@@ -829,7 +854,7 @@ static int rkisp_s_fmt_vid_cap_mplane(struct file *file,
 	struct rkisp_vdev_node *node = vdev_to_node(vdev);
 	struct rkisp_device *dev = stream->ispdev;
 
-	if (vb2_is_busy(&node->buf_queue)) {
+	if (vb2_is_streaming(&node->buf_queue)) {
 		v4l2_err(&dev->v4l2_dev, "%s queue busy\n", __func__);
 		return -EBUSY;
 	}
@@ -990,6 +1015,7 @@ int rkisp_register_stream_vdev(struct rkisp_stream *stream)
 	struct media_entity *source, *sink;
 	int ret = 0, pad;
 
+	mutex_init(&stream->apilock);
 	node = vdev_to_node(vdev);
 
 	vdev->ioctl_ops = &rkisp_v4l2_ioctl_ops;
@@ -997,7 +1023,7 @@ int rkisp_register_stream_vdev(struct rkisp_stream *stream)
 	vdev->fops = &rkisp_fops;
 	vdev->minor = -1;
 	vdev->v4l2_dev = v4l2_dev;
-	vdev->lock = &dev->apilock;
+	vdev->lock = &stream->apilock;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE_MPLANE |
 				V4L2_CAP_STREAMING;
 	video_set_drvdata(vdev, stream);

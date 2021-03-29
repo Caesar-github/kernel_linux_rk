@@ -7,6 +7,7 @@
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-vmalloc.h>	/* for ISP statistics */
 #include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 #include <media/v4l2-mc.h>
 #include "dev.h"
 #include "regs.h"
@@ -26,7 +27,7 @@ static void update_addr(struct rkispp_stats_vdev *stats_vdev)
 	}
 
 	if (!stats_vdev->next_buf) {
-		dummy_buf = &stats_vdev->dummy_buf;
+		dummy_buf = &stats_vdev->dev->hw_dev->dummy_buf;
 		if (!dummy_buf->mem_priv)
 			return;
 
@@ -45,7 +46,7 @@ static int rkispp_stats_frame_end(struct rkispp_stats_vdev *stats_vdev)
 	if (stats_vdev->curr_buf) {
 		u64 ns = ktime_get_ns();
 		u32 total_num = readl(base + RKISPP_ORB_TOTAL_NUM);
-		u32 cur_frame_id = atomic_read(&dev->ispp_sdev.frm_sync_seq) - 1;
+		u32 cur_frame_id = dev->ispp_sdev.frm_sync_seq;
 		void *vaddr;
 
 		curr_buf = stats_vdev->curr_buf;
@@ -213,7 +214,14 @@ static void rkispp_stats_vb2_buf_queue(struct vb2_buffer *vb)
 	struct rkispp_stats_vdev *stats_dev = vq->drv_priv;
 	unsigned long lock_flags = 0;
 
-	buf->buff_addr[0] = vb2_dma_contig_plane_dma_addr(vb, 0);
+	vb2_plane_vaddr(vb, 0);
+	if (stats_dev->dev->hw_dev->is_mmu) {
+		struct sg_table *sgt = vb2_dma_sg_plane_desc(vb, 0);
+
+		buf->buff_addr[0] = sg_dma_address(sgt->sgl);
+	} else {
+		buf->buff_addr[0] = vb2_dma_contig_plane_dma_addr(vb, 0);
+	}
 	spin_lock_irqsave(&stats_dev->irq_lock, lock_flags);
 	if (stats_dev->streamon &&
 	    !stats_dev->next_buf) {
@@ -255,7 +263,6 @@ static void rkispp_stats_vb2_stop_streaming(struct vb2_queue *vq)
 	stats_vdev->streamon = false;
 	destroy_buf_queue(stats_vdev, VB2_BUF_STATE_ERROR);
 	spin_unlock_irqrestore(&stats_vdev->irq_lock, flags);
-	rkispp_free_buffer(stats_vdev->dev, &stats_vdev->dummy_buf);
 }
 
 static int
@@ -264,15 +271,9 @@ rkispp_stats_vb2_start_streaming(struct vb2_queue *queue,
 {
 	struct rkispp_stats_vdev *stats_vdev = queue->drv_priv;
 	unsigned long flags;
-	int ret;
 
 	if (stats_vdev->streamon)
 		return -EBUSY;
-
-	stats_vdev->dummy_buf.size = sizeof(struct rkispp_stats_buffer);
-	ret = rkispp_allow_buffer(stats_vdev->dev, &stats_vdev->dummy_buf);
-	if (ret < 0)
-		goto free_dummy_buf;
 
 	/* config first buf */
 	rkispp_stats_frame_end(stats_vdev);
@@ -282,10 +283,6 @@ rkispp_stats_vb2_start_streaming(struct vb2_queue *queue,
 	spin_unlock_irqrestore(&stats_vdev->irq_lock, flags);
 
 	return 0;
-
-free_dummy_buf:
-	rkispp_free_buffer(stats_vdev->dev, &stats_vdev->dummy_buf);
-	return ret;
 }
 
 static struct vb2_ops rkispp_stats_vb2_ops = {
@@ -304,11 +301,13 @@ static int rkispp_stats_init_vb2_queue(struct vb2_queue *q,
 	q->io_modes = VB2_MMAP | VB2_USERPTR;
 	q->drv_priv = stats_vdev;
 	q->ops = &rkispp_stats_vb2_ops;
-	q->mem_ops = &vb2_dma_contig_memops;
+	q->mem_ops = stats_vdev->dev->hw_dev->mem_ops;
 	q->buf_struct_size = sizeof(struct rkispp_buffer);
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &stats_vdev->dev->iqlock;
 	q->dev = stats_vdev->dev->hw_dev->dev;
+	if (stats_vdev->dev->hw_dev->is_dma_contig)
+		q->dma_attrs = DMA_ATTR_FORCE_CONTIGUOUS;
 
 	return vb2_queue_init(q);
 }

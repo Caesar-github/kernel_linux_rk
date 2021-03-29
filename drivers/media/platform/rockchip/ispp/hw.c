@@ -5,6 +5,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/iommu.h>
 #include <linux/module.h>
 #include <linux/of.h>
 #include <linux/of_graph.h>
@@ -12,9 +13,13 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm_runtime.h>
+#include <linux/reset.h>
+#include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 
 #include "common.h"
 #include "dev.h"
+#include "fec.h"
 #include "hw.h"
 #include "regs.h"
 
@@ -32,6 +37,33 @@ struct irqs_data {
 	const char *name;
 	irqreturn_t (*irq_hdl)(int irq, void *ctx);
 };
+
+void rkispp_soft_reset(struct rkispp_hw_dev *hw)
+{
+	struct iommu_domain *domain = iommu_get_domain_for_dev(hw->dev);
+
+	if (domain)
+		iommu_detach_device(domain, hw->dev);
+	writel(GLB_SOFT_RST_ALL, hw->base_addr + RKISPP_CTRL_RESET);
+	udelay(10);
+	if (hw->reset) {
+		reset_control_assert(hw->reset);
+		udelay(20);
+		reset_control_deassert(hw->reset);
+		udelay(20);
+	}
+	if (domain)
+		iommu_attach_device(domain, hw->dev);
+
+	writel(SW_SCL_BYPASS, hw->base_addr + RKISPP_SCL0_CTRL);
+	writel(SW_SCL_BYPASS, hw->base_addr + RKISPP_SCL1_CTRL);
+	writel(SW_SCL_BYPASS, hw->base_addr + RKISPP_SCL2_CTRL);
+	writel(OTHER_FORCE_UPD, hw->base_addr + RKISPP_CTRL_UPDATE);
+	writel(GATE_DIS_ALL, hw->base_addr + RKISPP_CTRL_CLKGATE);
+	writel(SW_FEC2DDR_DIS, hw->base_addr + RKISPP_FEC_CORE_CTRL);
+	writel(0x6ffffff, hw->base_addr + RKISPP_CTRL_INT_MSK);
+	writel(GATE_DIS_NR, hw->base_addr + RKISPP_CTRL_CLKGATE);
+}
 
 /* using default value if reg no write for multi device */
 static void default_sw_reg_flag(struct rkispp_device *dev)
@@ -53,7 +85,7 @@ static void default_sw_reg_flag(struct rkispp_device *dev)
 	u32 i, *flag;
 
 	for (i = 0; i < ARRAY_SIZE(reg); i++) {
-		flag = dev->sw_base_addr + reg[i] + ISPP_SW_REG_SIZE;
+		flag = dev->sw_base_addr + reg[i] + RKISP_ISPP_SW_REG_SIZE;
 		*flag = 0xffffffff;
 	}
 }
@@ -96,8 +128,6 @@ static int enable_sys_clk(struct rkispp_hw_dev *dev)
 			goto err;
 	}
 
-	if (rkispp_clk_dbg)
-		return 0;
 	for (i = 0; i < dev->clk_rate_tbl_num; i++)
 		if (w <= dev->clk_rate_tbl[i].refer_data)
 			break;
@@ -105,7 +135,9 @@ static int enable_sys_clk(struct rkispp_hw_dev *dev)
 		i++;
 	if (i > dev->clk_rate_tbl_num - 1)
 		i = dev->clk_rate_tbl_num - 1;
-	clk_set_rate(dev->clks[0], dev->clk_rate_tbl[i].clk_rate * 1000000UL);
+	dev->core_clk_max = dev->clk_rate_tbl[i].clk_rate * 1000000;
+	dev->core_clk_min = dev->clk_rate_tbl[0].clk_rate * 1000000;
+	rkispp_set_clk_rate(dev->clks[0], dev->core_clk_min);
 	dev_dbg(dev->dev, "set ispp clk:%luHz\n", clk_get_rate(dev->clks[0]));
 	return 0;
 err:
@@ -127,6 +159,11 @@ static irqreturn_t irq_hdl(int irq, void *ctx)
 	writel(mis_val, base + RKISPP_CTRL_INT_CLR);
 	spin_unlock(&hw_dev->irq_lock);
 
+	if (IS_ENABLED(CONFIG_VIDEO_ROCKCHIP_ISPP_FEC) && mis_val & FEC_INT) {
+		mis_val &= ~FEC_INT;
+		rkispp_fec_irq(hw_dev);
+	}
+
 	if (mis_val)
 		ispp->irq_hdl(mis_val, ispp);
 
@@ -141,6 +178,9 @@ static const char * const rv1126_ispp_clks[] = {
 
 static const struct ispp_clk_info rv1126_ispp_clk_rate[] = {
 	{
+		.clk_rate = 150,
+		.refer_data = 0,
+	}, {
 		.clk_rate = 250,
 		.refer_data = 1920 //width
 	}, {
@@ -267,6 +307,12 @@ static int rkispp_hw_probe(struct platform_device *pdev)
 	hw_dev->clk_rate_tbl = match_data->clk_rate_tbl;
 	hw_dev->clk_rate_tbl_num = match_data->clk_rate_tbl_num;
 
+	hw_dev->reset = devm_reset_control_array_get(dev, false, false);
+	if (IS_ERR(hw_dev->reset)) {
+		dev_info(dev, "failed to get cru reset\n");
+		hw_dev->reset = NULL;
+	}
+
 	hw_dev->dev_num = 0;
 	hw_dev->cur_dev_id = 0;
 	hw_dev->ispp_ver = match_data->ispp_ver;
@@ -277,12 +323,26 @@ static int rkispp_hw_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&hw_dev->list);
 	hw_dev->is_idle = true;
 	hw_dev->is_single = true;
-	if (!is_iommu_enable(dev)) {
-		ret = of_reserved_mem_device_init(dev);
-		if (ret)
-			dev_warn(dev, "No reserved memory region assign to ispp\n");
+	hw_dev->is_fec_ext = false;
+	hw_dev->is_dma_contig = true;
+	hw_dev->is_shutdown = false;
+	hw_dev->is_first = true;
+	hw_dev->is_mmu = is_iommu_enable(dev);
+	ret = of_reserved_mem_device_init(dev);
+	if (ret) {
+		if (!hw_dev->is_mmu)
+			dev_warn(dev, "No reserved memory region. default cma area!\n");
+		else
+			hw_dev->is_dma_contig = false;
 	}
+	if (!hw_dev->is_mmu)
+		hw_dev->mem_ops = &vb2_dma_contig_memops;
+	else if (!hw_dev->is_dma_contig)
+		hw_dev->mem_ops = &vb2_dma_sg_memops;
+	else
+		hw_dev->mem_ops = &vb2_rdma_sg_memops;
 
+	rkispp_register_fec(hw_dev);
 	pm_runtime_enable(&pdev->dev);
 
 	return platform_driver_register(&rkispp_plat_drv);
@@ -296,7 +356,20 @@ static int rkispp_hw_remove(struct platform_device *pdev)
 
 	pm_runtime_disable(&pdev->dev);
 	mutex_destroy(&hw_dev->dev_lock);
+	rkispp_unregister_fec(hw_dev);
 	return 0;
+}
+
+static void rkispp_hw_shutdown(struct platform_device *pdev)
+{
+	struct rkispp_hw_dev *hw_dev = platform_get_drvdata(pdev);
+
+	hw_dev->is_shutdown = true;
+	if (pm_runtime_active(&pdev->dev)) {
+		writel(0, hw_dev->base_addr + RKISPP_CTRL_INT_MSK);
+		writel(GLB_SOFT_RST_ALL, hw_dev->base_addr + RKISPP_CTRL_RESET);
+	}
+	dev_info(&pdev->dev, "%s\n", __func__);
 }
 
 static int __maybe_unused rkispp_runtime_suspend(struct device *dev)
@@ -304,7 +377,6 @@ static int __maybe_unused rkispp_runtime_suspend(struct device *dev)
 	struct rkispp_hw_dev *hw_dev = dev_get_drvdata(dev);
 
 	writel(0, hw_dev->base_addr + RKISPP_CTRL_INT_MSK);
-	writel(GLB_SOFT_RST_ALL, hw_dev->base_addr + RKISPP_CTRL_RESET);
 	disable_sys_clk(hw_dev);
 	return 0;
 }
@@ -316,21 +388,13 @@ static int __maybe_unused rkispp_runtime_resume(struct device *dev)
 	int i;
 
 	enable_sys_clk(hw_dev);
-
-	writel(SW_SCL_BYPASS, base + RKISPP_SCL0_CTRL);
-	writel(SW_SCL_BYPASS, base + RKISPP_SCL1_CTRL);
-	writel(SW_SCL_BYPASS, base + RKISPP_SCL2_CTRL);
-	writel(OTHER_FORCE_UPD, base + RKISPP_CTRL_UPDATE);
-	writel(GATE_DIS_ALL, base + RKISPP_CTRL_CLKGATE);
-	writel(SW_FEC2DDR_DIS, base + RKISPP_FEC_CORE_CTRL);
-	writel(0xfffffff, base + RKISPP_CTRL_INT_MSK);
-	writel(GATE_DIS_NR, base + RKISPP_CTRL_CLKGATE);
+	rkispp_soft_reset(hw_dev);
 
 	for (i = 0; i < hw_dev->dev_num; i++) {
 		void *buf = hw_dev->ispp[i]->sw_base_addr;
 
-		memset(buf, 0, ISPP_SW_MAX_SIZE);
-		memcpy_fromio(buf, base, ISPP_SW_REG_SIZE);
+		memset(buf, 0, RKISP_ISPP_SW_MAX_SIZE);
+		memcpy_fromio(buf, base, RKISP_ISPP_SW_REG_SIZE);
 		default_sw_reg_flag(hw_dev->ispp[i]);
 	}
 	hw_dev->is_idle = true;
@@ -352,6 +416,7 @@ static struct platform_driver rkispp_hw_drv = {
 	},
 	.probe = rkispp_hw_probe,
 	.remove = rkispp_hw_remove,
+	.shutdown = rkispp_hw_shutdown,
 };
 
 #if IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISP) && IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISPP)

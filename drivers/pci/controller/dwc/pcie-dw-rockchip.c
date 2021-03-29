@@ -14,6 +14,9 @@
 #include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
+#include <linux/irq.h>
+#include <linux/irqchip/chained_irq.h>
+#include <linux/irqdomain.h>
 #include <linux/kernel.h>
 #include <linux/kthread.h>
 #include <linux/list.h>
@@ -80,6 +83,9 @@ struct reset_bulk_data	{
 
 #define PCIE_CAP_LINK_CONTROL2_LINK_STATUS	0xa0
 
+#define PCIE_CLIENT_INTR_STATUS_LEGACY	0x08
+#define PCIE_CLIENT_INTR_MASK_LEGACY	0x1c
+#define UNMASK_ALL_LEGACY_INT		0xffff0000
 #define PCIE_CLIENT_INTR_MASK		0x24
 #define PCIE_CLIENT_GENERAL_DEBUG	0x104
 #define PCIE_CLIENT_HOT_RESET_CTRL	0x180
@@ -87,6 +93,15 @@ struct reset_bulk_data	{
 #define PCIE_CLIENT_LTSSM_STATUS	0x300
 #define SMLH_LINKUP			BIT(16)
 #define RDLH_LINKUP			BIT(17)
+#define PCIE_CLIENT_DBG_FIFO_MODE_CON	0x310
+#define PCIE_CLIENT_DBG_FIFO_PTN_HIT_D0 0x320
+#define PCIE_CLIENT_DBG_FIFO_PTN_HIT_D1 0x324
+#define PCIE_CLIENT_DBG_FIFO_TRN_HIT_D0 0x328
+#define PCIE_CLIENT_DBG_FIFO_TRN_HIT_D1 0x32c
+#define PCIE_CLIENT_DBG_FIFO_STATUS	0x350
+#define PCIE_CLIENT_DBG_TRANSITION_DATA	0xffff0000
+#define PCIE_CLIENT_DBF_EN		0xffff0003
+#define RK_PCIE_DBG			0
 
 #define PCIE_PHY_LINKUP			BIT(0)
 #define PCIE_DATA_LINKUP		BIT(1)
@@ -95,6 +110,9 @@ struct reset_bulk_data	{
 #define PCIE_SB_BAR0_MASK_REG		0x100010
 
 #define PCIE_PL_ORDER_RULE_CTRL_OFF	0x8B4
+
+#define FAKE_MIN_VOL			100000
+#define FAKE_MAX_VOL			3300000
 
 struct rk_pcie {
 	struct dw_pcie			*pci;
@@ -121,8 +139,10 @@ struct rk_pcie {
 	struct dma_trx_obj		*dma_obj;
 	bool				in_suspend;
 	bool				is_rk1808;
+	bool				is_signal_test;
 	bool				bifurcation;
 	struct regulator		*vpcie3v3;
+	struct irq_domain		*irq_domain;
 };
 
 struct rk_pcie_of_data {
@@ -130,6 +150,7 @@ struct rk_pcie_of_data {
 };
 
 #define to_rk_pcie(x)	dev_get_drvdata((x)->dev)
+static const struct dev_pm_ops rockchip_dw_pcie_pm_ops;
 
 static int rk_pcie_read(void __iomem *addr, int size, u32 *val)
 {
@@ -379,51 +400,88 @@ static int rk_pcie_link_up(struct dw_pcie *pci)
 	return 0;
 }
 
+static void rk_pcie_enable_debug(struct rk_pcie *rk_pcie)
+{
+#if RK_PCIE_DBG
+	if (rk_pcie->is_rk1808 == true)
+		return;
+
+	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_PTN_HIT_D0,
+			   PCIE_CLIENT_DBG_TRANSITION_DATA);
+	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_PTN_HIT_D1,
+			   PCIE_CLIENT_DBG_TRANSITION_DATA);
+	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_TRN_HIT_D0,
+			   PCIE_CLIENT_DBG_TRANSITION_DATA);
+	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_TRN_HIT_D1,
+			   PCIE_CLIENT_DBG_TRANSITION_DATA);
+	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_MODE_CON,
+			   PCIE_CLIENT_DBF_EN);
+#endif
+}
+
+static void rk_pcie_debug_dump(struct rk_pcie *rk_pcie)
+{
+#if RK_PCIE_DBG
+	u32 loop;
+	struct dw_pcie *pci = rk_pcie->pci;
+
+	dev_info(pci->dev, "ltssm = 0x%x\n",
+		 rk_pcie_readl_apb(rk_pcie, PCIE_CLIENT_LTSSM_STATUS));
+	for (loop = 0; loop < 64; loop++)
+		dev_info(pci->dev, "fifo_status = 0x%x\n",
+			 rk_pcie_readl_apb(rk_pcie, PCIE_CLIENT_DBG_FIFO_STATUS));
+#endif
+}
+
 static int rk_pcie_establish_link(struct dw_pcie *pci)
 {
 	int retries;
 	struct rk_pcie *rk_pcie = to_rk_pcie(pci);
-	int err = 0;
 
 	if (dw_pcie_link_up(pci)) {
 		dev_err(pci->dev, "link is already up\n");
 		return 0;
 	}
 
-	if (!IS_ERR(rk_pcie->vpcie3v3)) {
-		err = regulator_enable(rk_pcie->vpcie3v3);
-		if (err) {
-			dev_err(pci->dev, "fail to enable vpcie3v3 regulator\n");
-			return err;
-		}
-	}
-
 	/* Rest the device */
 	gpiod_set_value_cansleep(rk_pcie->rst_gpio, 0);
-	msleep(1000);
-	gpiod_set_value_cansleep(rk_pcie->rst_gpio, 1);
 
 	rk_pcie_disable_ltssm(rk_pcie);
 	rk_pcie_link_status_clear(rk_pcie);
+	rk_pcie_enable_debug(rk_pcie);
 
 	/* Enable LTSSM */
 	rk_pcie_enable_ltssm(rk_pcie);
 
-	for (retries = 0; retries < 1000000; retries++) {
+	/*
+	 * PCIe requires the refclk to be stable for 100µs prior to releasing
+	 * PERST.  See table 2-4 in section 2.6.2 AC Specifications of the PCI
+	 * Express Card Electromechanical Specification, 1.1. However, we don't
+	 * know if the refclk is coming from RC's PHY or external OSC. If it's
+	 * from RC, so enabling LTSSM is the just right place to release #PERST.
+	 * We need a little more extra time as before, rather than setting just
+	 * 100us as we don't know how long should the device need to reset.
+	 */
+	msleep(1000);
+	gpiod_set_value_cansleep(rk_pcie->rst_gpio, 1);
+
+	for (retries = 0; retries < 10; retries++) {
 		if (dw_pcie_link_up(pci)) {
 			dev_info(pci->dev, "PCIe Link up, LTSSM is 0x%x\n",
 				 rk_pcie_readl_apb(rk_pcie, PCIE_CLIENT_LTSSM_STATUS));
+			rk_pcie_debug_dump(rk_pcie);
 			return 0;
 		}
 
 		dev_info_ratelimited(pci->dev, "PCIe Linking... LTSSM is 0x%x\n",
 				     rk_pcie_readl_apb(rk_pcie, PCIE_CLIENT_LTSSM_STATUS));
-		mdelay(1000);
+		rk_pcie_debug_dump(rk_pcie);
+		msleep(1000);
 	}
 
 	dev_err(pci->dev, "PCIe Link Fail\n");
 
-	return -EINVAL;
+	return rk_pcie->is_signal_test == true ? 0 : -EINVAL;
 }
 
 static int rk_pcie_host_init_dma_trx(struct rk_pcie *rk_pcie)
@@ -939,18 +997,21 @@ rk_pcie_handle_dma_interrupt(struct rk_pcie *rk_pcie)
 static irqreturn_t rk_pcie_sys_irq_handler(int irq, void *arg)
 {
 	struct rk_pcie *rk_pcie = arg;
-	u32 chn = rk_pcie->dma_obj->cur->chn;
+	u32 chn = 0;
 	union int_status status;
 	union int_clear clears;
 
 	status.asdword = dw_pcie_readl_dbi(rk_pcie->pci, PCIE_DMA_OFFSET +
 					   PCIE_DMA_WR_INT_STATUS);
 
+	if (rk_pcie->dma_obj && rk_pcie->dma_obj->cur)
+		chn = rk_pcie->dma_obj->cur->chn;
+
 	if (status.donesta & BIT(0)) {
-		rk_pcie_handle_dma_interrupt(rk_pcie);
 		clears.doneclr = 0x1 << chn;
 		dw_pcie_writel_dbi(rk_pcie->pci, PCIE_DMA_OFFSET +
 				   PCIE_DMA_WR_INT_CLEAR, clears.asdword);
+		rk_pcie_handle_dma_interrupt(rk_pcie);
 	}
 
 	if (status.abortsta & BIT(0)) {
@@ -1013,6 +1074,8 @@ static const struct of_device_id rk_pcie_of_match[] = {
 	{},
 };
 
+MODULE_DEVICE_TABLE(of, rk_pcie_of_match);
+
 static const struct dw_pcie_ops dw_pcie_ops = {
 	.start_link = rk_pcie_establish_link,
 	.link_up = rk_pcie_link_up,
@@ -1061,8 +1124,112 @@ static void rk_pcie_fast_link_setup(struct rk_pcie *rk_pcie)
 	rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_HOT_RESET_CTRL, val);
 }
 
-static int rk_pcie_probe(struct platform_device *pdev)
+static int rk_pcie_intx_map(struct irq_domain *domain, unsigned int irq,
+			    irq_hw_number_t hwirq)
 {
+	irq_set_chip_and_handler(irq, &dummy_irq_chip, handle_simple_irq);
+	irq_set_chip_data(irq, domain->host_data);
+
+	return 0;
+}
+
+static const struct irq_domain_ops intx_domain_ops = {
+	.map = rk_pcie_intx_map,
+};
+
+static void rk_pcie_legacy_int_handler(struct irq_desc *desc)
+{
+	struct irq_chip *chip = irq_desc_get_chip(desc);
+	struct rk_pcie *rockchip = irq_desc_get_handler_data(desc);
+	struct device *dev = rockchip->pci->dev;
+	u32 reg;
+	u32 hwirq;
+	u32 virq;
+
+	chained_irq_enter(chip, desc);
+
+	reg = rk_pcie_readl_apb(rockchip, PCIE_CLIENT_INTR_STATUS_LEGACY);
+	reg = reg & 0xf;
+
+	while (reg) {
+		hwirq = ffs(reg) - 1;
+		reg &= ~BIT(hwirq);
+
+		virq = irq_find_mapping(rockchip->irq_domain, hwirq);
+		if (virq)
+			generic_handle_irq(virq);
+		else
+			dev_err(dev, "unexpected IRQ, INT%d\n", hwirq);
+	}
+
+	chained_irq_exit(chip, desc);
+}
+
+static int rk_pcie_init_irq_domain(struct rk_pcie *rockchip)
+{
+	struct device *dev = rockchip->pci->dev;
+	struct device_node *intc = of_get_next_child(dev->of_node, NULL);
+
+	if (!intc) {
+		dev_err(dev, "missing child interrupt-controller node\n");
+		return -EINVAL;
+	}
+
+	rockchip->irq_domain = irq_domain_add_linear(intc, PCI_NUM_INTX,
+						     &intx_domain_ops, rockchip);
+	if (!rockchip->irq_domain) {
+		dev_err(dev, "failed to get a INTx IRQ domain\n");
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
+static int rk_pcie_enable_power(struct rk_pcie *rk_pcie)
+{
+	int ret = 0;
+	struct device *dev = rk_pcie->pci->dev;
+
+	if (IS_ERR(rk_pcie->vpcie3v3))
+		return ret;
+
+	ret = regulator_set_voltage(rk_pcie->vpcie3v3, FAKE_MAX_VOL, FAKE_MAX_VOL);
+	if (ret) {
+		dev_err(dev, "fail to set vpcie3v3 regulator\n");
+		return ret;
+	}
+
+	ret = regulator_enable(rk_pcie->vpcie3v3);
+	if (ret)
+		dev_err(dev, "fail to enable vpcie3v3 regulator\n");
+
+	return ret;
+}
+
+static int rk_pcie_disable_power(struct rk_pcie *rk_pcie)
+{
+	int ret = 0;
+	struct device *dev = rk_pcie->pci->dev;
+
+	if (IS_ERR(rk_pcie->vpcie3v3))
+		return ret;
+
+	ret = regulator_set_voltage(rk_pcie->vpcie3v3, FAKE_MIN_VOL, FAKE_MIN_VOL);
+	if (ret) {
+		dev_err(dev, "fail to set vpcie3v3 regulator\n");
+		return ret;
+	}
+
+	ret = regulator_disable(rk_pcie->vpcie3v3);
+	if (ret)
+		dev_err(dev, "fail to disable vpcie3v3 regulator\n");
+
+	return ret;
+}
+
+static int rk_pcie_really_probe(void *p)
+{
+	struct platform_device *pdev = p;
 	struct device *dev = &pdev->dev;
 	struct rk_pcie *rk_pcie;
 	struct dw_pcie *pci;
@@ -1071,6 +1238,9 @@ static int rk_pcie_probe(struct platform_device *pdev)
 	const struct rk_pcie_of_data *data;
 	enum rk_pcie_device_mode mode;
 	struct device_node *np = pdev->dev.of_node;
+	struct platform_driver *drv = to_platform_driver(dev->driver);
+	u32 val;
+	int irq;
 
 	match = of_match_device(rk_pcie_of_match, dev);
 	if (!match)
@@ -1108,26 +1278,7 @@ static int rk_pcie_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = rk_pcie_phy_init(rk_pcie);
-	if (ret) {
-		dev_err(dev, "phy init failed\n");
-		return ret;
-	}
-
-	ret = rk_pcie_reset_control_release(rk_pcie);
-	if (ret) {
-		dev_err(dev, "reset control init failed\n");
-		return ret;
-	}
-
-	ret = rk_pcie_request_sys_irq(rk_pcie, pdev);
-	if (ret) {
-		dev_err(dev, "pcie irq init failed\n");
-		return ret;
-	}
-
-	platform_set_drvdata(pdev, rk_pcie);
-
+	/* DON'T MOVE ME: must be enable before phy init */
 	rk_pcie->vpcie3v3 = devm_regulator_get_optional(dev, "vpcie3v3");
 	if (IS_ERR(rk_pcie->vpcie3v3)) {
 		if (PTR_ERR(rk_pcie->vpcie3v3) != -ENODEV)
@@ -1135,10 +1286,34 @@ static int rk_pcie_probe(struct platform_device *pdev)
 		dev_info(dev, "no vpcie3v3 regulator found\n");
 	}
 
+	ret = rk_pcie_enable_power(rk_pcie);
+	if (ret)
+		return ret;
+
+	ret = rk_pcie_phy_init(rk_pcie);
+	if (ret) {
+		dev_err(dev, "phy init failed\n");
+		goto disable_vpcie3v3;
+	}
+
+	ret = rk_pcie_reset_control_release(rk_pcie);
+	if (ret) {
+		dev_err(dev, "reset control init failed\n");
+		goto disable_vpcie3v3;
+	}
+
+	ret = rk_pcie_request_sys_irq(rk_pcie, pdev);
+	if (ret) {
+		dev_err(dev, "pcie irq init failed\n");
+		goto disable_vpcie3v3;
+	}
+
+	platform_set_drvdata(pdev, rk_pcie);
+
 	ret = rk_pcie_clk_init(rk_pcie);
 	if (ret) {
 		dev_err(dev, "clock init failed\n");
-		return ret;
+		goto disable_vpcie3v3;
 	}
 
 	dw_pcie_dbi_ro_wr_en(pci);
@@ -1151,8 +1326,39 @@ static int rk_pcie_probe(struct platform_device *pdev)
 		rk_pcie_fast_link_setup(rk_pcie);
 	}
 
+	/* Legacy interrupt is optional */
+	ret = rk_pcie_init_irq_domain(rk_pcie);
+	if (!ret) {
+		irq = platform_get_irq_byname(pdev, "legacy");
+		if (irq >= 0) {
+			irq_set_chained_handler_and_data(irq, rk_pcie_legacy_int_handler,
+							 rk_pcie);
+			/* Unmask all legacy interrupt from INTA~INTD  */
+			rk_pcie_writel_apb(rk_pcie, PCIE_CLIENT_INTR_MASK_LEGACY,
+					   UNMASK_ALL_LEGACY_INT);
+		}
+
+		dev_info(dev, "missing legacy IRQ resource\n");
+	}
+
 	/* Set PCIe mode */
 	rk_pcie_set_mode(rk_pcie);
+
+	/* Force into loopback master mode */
+	if (device_property_read_bool(dev, "rockchip,lpbk-master")) {
+		val = dw_pcie_readl_dbi(pci, PCIE_PORT_LINK_CONTROL);
+		val |= PORT_LINK_LPBK_ENABLE;
+		dw_pcie_writel_dbi(pci, PCIE_PORT_LINK_CONTROL, val);
+		rk_pcie->is_signal_test = true;
+	}
+
+	/* Force into compliance mode */
+	if (device_property_read_bool(dev, "rockchip,compliance-mode")) {
+		val = dw_pcie_readl_dbi(pci, PCIE_CAP_LINK_CONTROL2_LINK_STATUS);
+		val |= BIT(4);
+		dw_pcie_writel_dbi(pci, PCIE_CAP_LINK_CONTROL2_LINK_STATUS, val);
+		rk_pcie->is_signal_test = true;
+	}
 
 	switch (rk_pcie->mode) {
 	case RK_PCIE_RC_TYPE:
@@ -1163,8 +1369,11 @@ static int rk_pcie_probe(struct platform_device *pdev)
 		break;
 	}
 
+	if (rk_pcie->is_signal_test == true)
+		return 0;
+
 	if (ret)
-		goto deinit_clk;
+		goto remove_irq_domain;
 
 	if (rk_pcie->dma_obj) {
 		rk_pcie->dma_obj->start_dma_func = rk_pcie_start_dma_dwc;
@@ -1175,27 +1384,43 @@ static int rk_pcie_probe(struct platform_device *pdev)
 		/* hold link reset grant after link-up */
 		ret = rk_pcie_reset_grant_ctrl(rk_pcie, false);
 		if (ret)
-			goto deinit_clk;
+			goto remove_irq_domain;
 	}
 
 	dw_pcie_dbi_ro_wr_dis(pci);
 
 	device_init_wakeup(dev, true);
+	drv->driver.pm = &rockchip_dw_pcie_pm_ops;
 
 	return 0;
 
+remove_irq_domain:
+	if (rk_pcie->irq_domain)
+		irq_domain_remove(rk_pcie->irq_domain);
 deinit_clk:
 	rk_pcie_clk_deinit(rk_pcie);
-	if (!IS_ERR(rk_pcie->vpcie3v3))
-		regulator_disable(rk_pcie->vpcie3v3);
+disable_vpcie3v3:
+	rk_pcie_disable_power(rk_pcie);
+
 	return ret;
 }
 
-MODULE_DEVICE_TABLE(of, rk_pcie_of_match);
+static int rk_pcie_probe(struct platform_device *pdev)
+{
+	struct task_struct *tsk;
+
+	tsk = kthread_run(rk_pcie_really_probe, pdev, "rk-pcie");
+	if (IS_ERR(tsk)) {
+		dev_err(&pdev->dev, "start rk-pcie thread failed\n");
+		return PTR_ERR(tsk);
+	}
+	return 0;
+}
 
 static int __maybe_unused rockchip_dw_pcie_suspend(struct device *dev)
 {
 	struct rk_pcie *rk_pcie = dev_get_drvdata(dev);
+	int ret;
 
 	rk_pcie_link_status_clear(rk_pcie);
 	rk_pcie_disable_ltssm(rk_pcie);
@@ -1210,13 +1435,20 @@ static int __maybe_unused rockchip_dw_pcie_suspend(struct device *dev)
 
 	rk_pcie->in_suspend = true;
 
-	return 0;
+	ret = rk_pcie_disable_power(rk_pcie);
+
+	return ret;
 }
 
 static int __maybe_unused rockchip_dw_pcie_resume(struct device *dev)
 {
 	struct rk_pcie *rk_pcie = dev_get_drvdata(dev);
+	bool std_rc = rk_pcie->mode == RK_PCIE_RC_TYPE && !rk_pcie->dma_obj;
 	int ret;
+
+	ret = rk_pcie_enable_power(rk_pcie);
+	if (ret)
+		return ret;
 
 	ret = clk_bulk_enable(rk_pcie->clk_cnt, rk_pcie->clks);
 	if (ret) {
@@ -1254,11 +1486,17 @@ static int __maybe_unused rockchip_dw_pcie_resume(struct device *dev)
 	/* Set PCIe mode */
 	rk_pcie_set_mode(rk_pcie);
 
+	if (std_rc)
+		dw_pcie_setup_rc(&rk_pcie->pci->pp);
+
 	ret = rk_pcie_establish_link(rk_pcie->pci);
 	if (ret) {
 		dev_err(dev, "failed to establish pcie link\n");
 		goto err;
 	}
+
+	if (std_rc)
+		goto std_rc_done;
 
 	ret = rk_pcie_ep_atu_init(rk_pcie);
 	if (ret) {
@@ -1268,25 +1506,27 @@ static int __maybe_unused rockchip_dw_pcie_resume(struct device *dev)
 
 	rk_pcie_ep_setup(rk_pcie);
 
-	/* hold link reset grant after link-up */
-	ret = rk_pcie_reset_grant_ctrl(rk_pcie, false);
-	if (ret)
-		goto err;
-
-	dw_pcie_dbi_ro_wr_dis(rk_pcie->pci);
-
 	rk_pcie->in_suspend = false;
+
+std_rc_done:
+	dw_pcie_dbi_ro_wr_dis(rk_pcie->pci);
+	/* hold link reset grant after link-up */
+	if (rk_pcie->is_rk1808) {
+		ret = rk_pcie_reset_grant_ctrl(rk_pcie, false);
+		if (ret)
+			goto err;
+	}
 
 	return 0;
 err:
-	if (!IS_ERR(rk_pcie->vpcie3v3))
-		regulator_disable(rk_pcie->vpcie3v3);
+	rk_pcie_disable_power(rk_pcie);
+
 	return ret;
 }
 
 static const struct dev_pm_ops rockchip_dw_pcie_pm_ops = {
-	SET_SYSTEM_SLEEP_PM_OPS(rockchip_dw_pcie_suspend,
-				rockchip_dw_pcie_resume)
+	SET_NOIRQ_SYSTEM_SLEEP_PM_OPS(rockchip_dw_pcie_suspend,
+				      rockchip_dw_pcie_resume)
 };
 
 static struct platform_driver rk_plat_pcie_driver = {
@@ -1294,7 +1534,6 @@ static struct platform_driver rk_plat_pcie_driver = {
 		.name	= "rk-pcie",
 		.of_match_table = rk_pcie_of_match,
 		.suppress_bind_attrs = true,
-		.pm = &rockchip_dw_pcie_pm_ops,
 	},
 };
 

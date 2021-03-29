@@ -11,12 +11,12 @@
 #include <dt-bindings/input/rk-input.h>
 #include <dt-bindings/sensor-dev.h>
 #include <dt-bindings/display/drm_mipi_dsi.h>
-#include "rk3568.dtsi"
+#include "rk3566.dtsi"
 #include "rk3568-android.dtsi"
 
 / {
 	model = "Rockchip RK3566 RK817 TABLET RKG11 LP4 Board";
-	compatible = "rockchip,rk3566-rk817-tablet-rkg11", "rockchip,rk3568";
+	compatible = "rockchip,rk3566-rk817-tablet-rkg11", "rockchip,rk3566";
 
 	adc_keys: adc-keys {
 		compatible = "adc-keys";
@@ -85,6 +85,21 @@
 		rockchip,uboot-low-power-voltage = <3350>;
 		rockchip,screen-on-voltage = <3400>;
 		status = "okay";
+	};
+
+	es7210_sound: es7210-sound {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,name = "rockchip,es7210";
+
+		simple-audio-card,cpu {
+			sound-dai = <&i2s1_8ch>;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&es7210>;
+		};
 	};
 
 	vccsys: vccsys {
@@ -206,7 +221,11 @@
 	cpu-supply = <&vdd_cpu>;
 };
 
-&csi_dphy {
+&csi2_dphy_hw {
+	status = "okay";
+};
+
+&csi2_dphy0 {
 	status = "okay";
 
 	ports {
@@ -225,7 +244,7 @@
 			mipi_in_ucam1: endpoint@1 {
 				reg = <1>;
 				remote-endpoint = <&ov8858_out>;
-				data-lanes = <1 2>;
+				data-lanes = <1 2 3 4>;
 			};
 		};
 		port@1 {
@@ -241,6 +260,15 @@
 	};
 };
 
+&dfi {
+	status = "okay";
+};
+
+&dmc {
+	center-supply = <&vdd_logic>;
+	status = "okay";
+};
+
 &dsi0 {
 	status = "okay";
 	rockchip,dual-channel = <&dsi1>;
@@ -250,12 +278,12 @@
 		reg = <0>;
 		backlight = <&backlight>;
 		power-supply = <&vcc3v3_lcd0_n>;
-		vsp-supply = <&outp>;
-		vsn-supply = <&outn>;
+		//vsp-supply = <&outp>;
+		//vsn-supply = <&outn>;
 		//enable-gpios = <&gpio0 RK_PC7 GPIO_ACTIVE_HIGH>;
 		reset-gpios = <&gpio0 RK_PC2 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&lcd_enable_gpio>, <&lcd_rst_gpio>;
+		pinctrl-0 = <&lcd_enable_gpio>, <&lcd_rst_gpio>, <&lcd_panel_vsp>, <&lcd_panel_vsn>;
 
 		prepare-delay-ms = <60>;
 		unprepare-delay-ms = <60>;
@@ -369,11 +397,11 @@
 		interrupts = <3 IRQ_TYPE_LEVEL_LOW>;
 
 		pinctrl-names = "default", "pmic-sleep",
-				"pmic-power-off";
+				"pmic-power-off", "pmic-reset";
 		pinctrl-0 = <&pmic_int>;
 		pinctrl-1 = <&soc_slppin_slp>, <&rk817_slppin_slp>;
 		pinctrl-2 = <&soc_slppin_gpio>, <&rk817_slppin_pwrdn>;
-		pinctrl-3 = <&soc_slppin_rst>, <&rk817_slppin_rst>;
+		pinctrl-3 = <&soc_slppin_gpio>, <&rk817_slppin_rst>;
 		rockchip,system-power-controller;
 		wakeup-source;
 		#clock-cells = <1>;
@@ -432,7 +460,7 @@
 				regulator-initial-mode = <0x2>;
 				regulator-name = "vdd_logic";
 				regulator-state-mem {
-					regulator-on-in-suspend;
+					regulator-off-in-suspend;
 					regulator-suspend-microvolt = <900000>;
 				};
 			};
@@ -446,7 +474,7 @@
 				regulator-ramp-delay = <6001>;
 				regulator-initial-mode = <0x2>;
 				regulator-name = "vdd_gpu";
-					regulator-state-mem {
+				regulator-state-mem {
 					regulator-off-in-suspend;
 				};
 			};
@@ -503,8 +531,8 @@
 				regulator-max-microvolt = <900000>;
 				regulator-name = "vdda0v9_pmu";
 				regulator-state-mem {
-				regulator-on-in-suspend;
-					regulator-suspend-microvolt = <1000000>;
+					regulator-on-in-suspend;
+					regulator-suspend-microvolt = <900000>;
 				};
 			};
 
@@ -526,8 +554,7 @@
 				regulator-max-microvolt = <3300000>;
 				regulator-name = "vccio_sd";
 				regulator-state-mem {
-					regulator-on-in-suspend;
-					regulator-suspend-microvolt = <3300000>;
+					regulator-off-in-suspend;
 				};
 			};
 
@@ -549,7 +576,7 @@
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <1800000>;
 				regulator-name = "vcc_1v8";
-					regulator-state-mem {
+				regulator-state-mem {
 					regulator-off-in-suspend;
 				};
 			};
@@ -560,7 +587,7 @@
 				regulator-min-microvolt = <1800000>;
 				regulator-max-microvolt = <1800000>;
 				regulator-name = "vcc1v8_dvp";
-					regulator-state-mem {
+				regulator-state-mem {
 					regulator-off-in-suspend;
 				};
 			};
@@ -571,7 +598,7 @@
 				regulator-min-microvolt = <2800000>;
 				regulator-max-microvolt = <2800000>;
 				regulator-name = "vcc2v8_dvp";
-					regulator-state-mem {
+				regulator-state-mem {
 					regulator-off-in-suspend;
 				};
 			};
@@ -582,10 +609,16 @@
 				regulator-min-microvolt = <4700000>;
 				regulator-max-microvolt = <5400000>;
 				regulator-name = "boost";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
 			};
 
 			otg_switch: OTG_SWITCH {
 				regulator-name = "otg_switch";
+				regulator-state-mem {
+					regulator-off-in-suspend;
+				};
 			};
 		};
 
@@ -624,10 +657,11 @@
 		rk817_codec: codec {
 			#sound-dai-cells = <0>;
 			compatible = "rockchip,rk817-codec";
-			clocks = <&cru I2S3_MCLKOUT_TX>;
+			clocks = <&cru I2S3_MCLKOUT>;
 			clock-names = "mclk";
-			assigned-clocks = <&cru I2S3_MCLKOUT_TX>;
-			assigned-clock-parents = <&cru CLK_I2S3_2CH_TX>;
+			assigned-clocks = <&cru I2S3_MCLKOUT>, <&cru I2S3_MCLK_IOE>;
+			assigned-clock-rates = <12288000>;
+			assigned-clock-parents = <&cru I2S3_MCLKOUT_TX>, <&cru I2S3_MCLKOUT>;
 			pinctrl-names = "default";
 			pinctrl-0 = <&i2s3m1_mclk>;
 			hp-volume = <20>;
@@ -635,7 +669,7 @@
 			mic-in-differential;
 			use-ext-amplifier;
 			//out-l2spk-r2hp;
-			spk-ctl-gpios = <&gpio0 RK_PA6 GPIO_ACTIVE_LOW>;
+			spk-ctl-gpios = <&gpio0 RK_PA6 GPIO_ACTIVE_HIGH>;
 			status = "okay";
 		};
 	};
@@ -647,6 +681,7 @@
 	dio5632@3e {
 		compatible = "DIO5632";
 		reg = <0x3e>;
+		status = "disabled";
 
 		outp: outp@3e {
 			regulator-name = "LCD_VSP";
@@ -659,6 +694,18 @@
 			vin-supply = <&vccsys>;
 			enable-gpios = <&gpio0 RK_PC0 GPIO_ACTIVE_HIGH>;
 		};
+	};
+
+	es7210: es7210@43 {
+		#sound-dai-cells = <0>;
+		compatible = "ES7210_MicArray_0";
+		reg = <0x43>;
+		clocks = <&cru I2S1_MCLKOUT_RX>;
+		clock-names = "mclk";
+		assigned-clocks = <&cru I2S1_MCLKOUT_RX>;
+		assigned-clock-parents = <&cru CLK_I2S1_8CH_RX>;
+		pinctrl-names = "default";
+		pinctrl-0 = <&i2s1m0_mclk>;
 	};
 };
 
@@ -681,7 +728,7 @@
 		//0->FRONT camera, 1->REAR camera
 		reset-gpios = <&gpio4 17 GPIO_ACTIVE_LOW>;
 		pwdn-gpios = <&gpio4 10 GPIO_ACTIVE_HIGH>;
-		rockchip,camera-module-index = <1>;
+		rockchip,camera-module-index = <0>;
 		rockchip,camera-module-facing = "front";
 		rockchip,camera-module-name = "XHG-RKX11F-V5";
 		rockchip,camera-module-lens-name = "HR232H65";
@@ -700,20 +747,21 @@
 		clocks = <&cru CLK_CAM0_OUT>;
 		clock-names = "xvclk";
 		power-domains = <&power RK3568_PD_VI>;
-		pinctrl-names = "default";
+		pinctrl-names = "rockchip,camera_default", "rockchip,camera_sleep";
 		pinctrl-0 = <&cam_clkout0>;
+		pinctrl-1 = <&cam_sleep>;
 		//reset pin control by hardware,used this pin switch to mipi input
 		//0->FRONT camera, 1->REAR camera
 		reset-gpios = <&gpio4 17 GPIO_ACTIVE_HIGH>;
 		pwdn-gpios = <&gpio4 11 GPIO_ACTIVE_HIGH>;
-		rockchip,camera-module-index = <0>;
+		rockchip,camera-module-index = <1>;
 		rockchip,camera-module-facing = "back";
 		rockchip,camera-module-name = "XHG-RKX11B-V10";
 		rockchip,camera-module-lens-name = "default";
 		port {
 			ov8858_out: endpoint {
 				remote-endpoint = <&mipi_in_ucam1>;
-				data-lanes = <1 2>;
+				data-lanes = <1 2 3 4>;
 			};
 		};
 	};
@@ -815,16 +863,24 @@
 &i2s1_8ch {
 	status = "okay";
 	#sound-dai-cells = <0>;
+	rockchip,clk-trcm = <2>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2s1m0_sclkrx
+		     &i2s1m0_lrckrx
+		     &i2s1m0_sdi0
+		     &i2s1m0_sdi1
+		     &i2s1m0_sdi2
+		     &i2s1m0_sdi3>;
 };
 
 &i2s3_2ch {
 	status = "okay";
-	rockchip,clk-trcm = <2>;
+	rockchip,clk-trcm = <1>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2s3m1_sclk
-			     &i2s3m1_lrck
-			     &i2s3m1_sdi
-			     &i2s3m1_sdo>;
+		     &i2s3m1_lrck
+		     &i2s3m1_sdi
+		     &i2s3m1_sdo>;
 };
 
 &jpegd {
@@ -856,7 +912,13 @@
 		cam_clkout0: cam-clkout0 {
 			rockchip,pins =
 				/* cam_clkout0 */
-				<4 RK_PA7 RK_FUNC_1 &pcfg_pull_none>;
+				<4 RK_PA7 1 &pcfg_pull_none>;
+		};
+
+		cam_sleep: cam-sleep {
+			rockchip,pins =
+				/* cam_sleep */
+				<4 RK_PA7 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 
 		camera_rst: camera-rst {
@@ -883,7 +945,7 @@
 
 	headphone {
 		hp_det: hp-det {
-			rockchip,pins = <0 RK_PC4 RK_FUNC_GPIO &pcfg_pull_down>;
+			rockchip,pins = <0 RK_PC4 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 
@@ -894,6 +956,14 @@
 
 		lcd_enable_gpio: lcd-enable-gpio {
 			rockchip,pins = <0 RK_PC7 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+
+		lcd_panel_vsp: lcd-panel-vsp {
+			rockchip,pins = <0 RK_PB7 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+
+		lcd_panel_vsn: lcd-panel-vsn {
+			rockchip,pins = <0 RK_PC0 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
 
@@ -910,12 +980,12 @@
 
 		soc_slppin_slp: soc_slppin_slp {
 			rockchip,pins =
-				<0 RK_PA2 RK_FUNC_1 &pcfg_pull_none>;
+				<0 RK_PA2 1 &pcfg_pull_none>;
 		};
 
 		soc_slppin_rst: soc_slppin_rst {
 			rockchip,pins =
-				<0 RK_PA2 RK_FUNC_2 &pcfg_pull_none>;
+				<0 RK_PA2 2 &pcfg_pull_none>;
 		};
 	};
 
@@ -1021,6 +1091,10 @@
 	status = "okay";
 };
 
+&route_dsi0 {
+	status = "okay";
+};
+
 &saradc {
 	status = "okay";
 	vref-supply = <&vcc_1v8>;
@@ -1030,7 +1104,7 @@
 	bus-width = <8>;
 	supports-emmc;
 	non-removable;
-	rockchip,txclk-tapnum = <0x10>;
+	rockchip,txclk-tapnum = <0x8>;
 	max-frequency = <200000000>;
 	status = "okay";
 };
@@ -1048,6 +1122,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_cmd &sdmmc1_clk>;
 	sd-uhs-sdr104;
+	rockchip,default-sample-phase = <90>;
 	status = "okay";
 };
 
@@ -1058,7 +1133,7 @@
 &uart1 {
 	status = "okay";
 	pinctrl-names = "default";
-	pinctrl-0 = <&uart1m0_xfer &uart1m0_rtsn>;
+	pinctrl-0 = <&uart1m0_xfer &uart1m0_ctsn>;
 };
 
 &u2phy0_otg {
@@ -1070,11 +1145,6 @@
 };
 
 &usbdrd_dwc3 {
-	dr_mode = "otg";
-	phys = <&u2phy0_otg>;
-	phy-names = "usb2-phy";
-	extcon = <&usb2phy0>;
-	maximum-speed = "high-speed";
 	status = "okay";
 };
 

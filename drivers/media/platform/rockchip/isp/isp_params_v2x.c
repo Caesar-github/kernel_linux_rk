@@ -5,6 +5,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/videobuf2-core.h>
 #include <media/videobuf2-vmalloc.h>   /* for ISP params */
+#include <linux/delay.h>
 #include <linux/rk-preisp.h>
 #include "dev.h"
 #include "regs.h"
@@ -60,8 +61,13 @@ isp_param_get_insize(struct rkisp_isp_params_vdev *params_vdev)
 {
 	struct rkisp_device *dev = params_vdev->dev;
 	struct rkisp_isp_subdev *isp_sdev = &dev->isp_sdev;
+	u32 height = isp_sdev->in_crop.height;
 
-	return isp_sdev->in_crop.width * isp_sdev->in_crop.height;
+	if (dev->isp_ver == ISP_V20 &&
+	    dev->csi_dev.rd_mode == HDR_RDBK_FRAME1)
+		height += RKMODULE_EXTEND_LINE;
+
+	return isp_sdev->in_crop.width * height;
 }
 
 static void
@@ -3103,12 +3109,35 @@ isp_rawnr_enable(struct rkisp_isp_params_vdev *params_vdev,
 	rkisp_iowrite32(params_vdev, value, ISP_RAWNR_CTRL);
 }
 
+static void isp_hdrtmo_wait_first_line(struct rkisp_isp_params_vdev *params_vdev)
+{
+	s32 retry = 8;
+	u32 value, line_cnt, frame_id;
+	struct v4l2_rect *out_crop = &params_vdev->dev->isp_sdev.out_crop;
+
+	rkisp_dmarx_get_frame(params_vdev->dev, &frame_id, NULL, NULL, true);
+
+	do {
+		value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_RO5);
+		line_cnt = value & 0x1fff;
+
+		if (frame_id != 0 && (line_cnt < 1 || line_cnt >= out_crop->height))
+			udelay(10);
+		else
+			break;
+	} while (retry-- > 0);
+
+	if (retry < 0)
+		dev_err(params_vdev->dev->dev, "hdr line_cnt(%d) < 1line\n",
+			line_cnt);
+}
+
 static void
 isp_hdrtmo_config(struct rkisp_isp_params_vdev *params_vdev,
 		  const struct isp2x_hdrtmo_cfg *arg, enum rkisp_params_type type)
 {
 	u8 big_en, nobig_en;
-	u32 value;
+	u32 value, irq_mask = 0x0;
 
 	if (type == RKISP_PARAMS_SHD || type == RKISP_PARAMS_ALL) {
 		value = rkisp_ioread32(params_vdev, ISP_HDRTMO_CTRL_CFG);
@@ -3119,6 +3148,23 @@ isp_hdrtmo_config(struct rkisp_isp_params_vdev *params_vdev,
 
 		value = ISP2X_PACK_2SHORT(arg->lgscl, arg->lgscl_inv);
 		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_SCL);
+
+		isp_hdrtmo_wait_first_line(params_vdev);
+
+		value = ISP2X_PACK_2SHORT(arg->set_palpha, arg->set_gainoff);
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG0);
+
+		value = ISP2X_PACK_2SHORT(arg->set_lgmin, arg->set_lgmax);
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG1);
+
+		value = ISP2X_PACK_2SHORT(arg->set_lgmean, arg->set_weightkey);
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG2);
+
+		value = ISP2X_PACK_2SHORT(arg->set_lgrange0, arg->set_lgrange1);
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG3);
+
+		value = arg->set_lgavgmax;
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG4);
 	}
 
 	if (type == RKISP_PARAMS_IMD || type == RKISP_PARAMS_ALL) {
@@ -3127,6 +3173,12 @@ isp_hdrtmo_config(struct rkisp_isp_params_vdev *params_vdev,
 		if (isp_param_get_insize(params_vdev) > ISP2X_NOBIG_OVERFLOW_SIZE) {
 			big_en = 1;
 			nobig_en = 0;
+		}
+
+		irq_mask = rkisp_ioread32(params_vdev, CIF_ISP_IMSC);
+		if (arg->cnt_mode & 0x01 && !(irq_mask & ISP2X_HDR_DONE)) {
+			irq_mask |= ISP2X_HDR_DONE;
+			rkisp_write(params_vdev->dev, CIF_ISP_IMSC, irq_mask, true);
 		}
 
 		value = rkisp_ioread32(params_vdev, ISP_HDRTMO_CTRL);
@@ -3151,21 +3203,6 @@ isp_hdrtmo_config(struct rkisp_isp_params_vdev *params_vdev,
 		value = 0x8000;
 		value |= arg->cfg_alpha & 0xFF;
 		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_CTRL_CFG);
-
-		value = ISP2X_PACK_2SHORT(arg->set_palpha, arg->set_gainoff);
-		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG0);
-
-		value = ISP2X_PACK_2SHORT(arg->set_lgmin, arg->set_lgmax);
-		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG1);
-
-		value = ISP2X_PACK_2SHORT(arg->set_lgmean, arg->set_weightkey);
-		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG2);
-
-		value = ISP2X_PACK_2SHORT(arg->set_lgrange0, arg->set_lgrange1);
-		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG3);
-
-		value = arg->set_lgavgmax;
-		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG4);
 
 		value = (arg->clipgap1_i & 0x0F) << 28 |
 			(arg->clipgap0_i & 0x0F) << 24 |
@@ -3437,10 +3474,6 @@ isp_gain_config(struct rkisp_isp_params_vdev *params_vdev,
 		mge_en = 1;
 	else
 		mge_en = 0;
-#if RKISP_NORMAL_MERGE_EN
-	if (dev->csi_dev.rd_mode == HDR_RDBK_FRAME1)
-		mge_en = 1;
-#endif
 
 	gain_wsize = rkisp_ioread32(params_vdev, MI_GAIN_WR_SIZE);
 	gain_wsize &= 0x0FFFFFF0;
@@ -3547,7 +3580,7 @@ isp_ldch_config(struct rkisp_isp_params_vdev *params_vdev,
 	struct rkisp_isp_params_val_v2x *priv_val;
 	struct isp2x_ldch_head *ldch_head;
 	int buf_idx, i;
-	u32 value;
+	u32 value, vsize;
 
 	priv_val = (struct rkisp_isp_params_val_v2x *)params_vdev->priv_val;
 	for (i = 0; i < ISP2X_LDCH_BUF_NUM; i++) {
@@ -3573,10 +3606,21 @@ isp_ldch_config(struct rkisp_isp_params_vdev *params_vdev,
 	ldch_head->stat = LDCH_BUF_CHIPINUSE;
 	priv_val->buf_ldch_idx = buf_idx;
 
+	vsize = arg->vsize;
+	/* normal extend line for ldch mesh */
+	if (dev->isp_ver == ISP_V20) {
+		void *buf = priv_val->buf_ldch[buf_idx].vaddr + ldch_head->data_oft;
+		u32 cnt = RKMODULE_EXTEND_LINE / 8;
+
+		value = arg->hsize * 4;
+		memcpy(buf + value * vsize, buf + value * (vsize - cnt), cnt * value);
+		if (dev->csi_dev.rd_mode == HDR_RDBK_FRAME1)
+			vsize += cnt;
+	}
 	value = priv_val->buf_ldch[buf_idx].dma_addr + ldch_head->data_oft;
 	rkisp_iowrite32(params_vdev, value, MI_LUT_LDCH_RD_BASE);
 	rkisp_iowrite32(params_vdev, arg->hsize, MI_LUT_LDCH_RD_H_WSIZE);
-	rkisp_iowrite32(params_vdev, arg->vsize, MI_LUT_LDCH_RD_V_SIZE);
+	rkisp_iowrite32(params_vdev, vsize, MI_LUT_LDCH_RD_V_SIZE);
 }
 
 static void
@@ -3965,8 +4009,13 @@ void __isp_isr_other_config(struct rkisp_isp_params_vdev *params_vdev,
 				&new_params->others.ldch_cfg);
 
 		if (module_en_update & ISP2X_MODULE_LDCH) {
+			/*
+			 * lsc read table from sram in mult-isp mode,
+			 * so don't delay in mult-isp mode.
+			 */
 			if (params_vdev->first_cfg_params &&
-			    !!(module_ens & ISP2X_MODULE_LDCH))
+			    !!(module_ens & ISP2X_MODULE_LDCH) &&
+			    params_vdev->dev->hw_dev->is_single)
 				priv_val->delay_en_ldch = true;
 			else
 				ops->ldch_enable(params_vdev,
@@ -4239,10 +4288,14 @@ static void rkisp_clear_first_param_v2x(struct rkisp_isp_params_vdev *params_vde
 static u32 rkisp_get_ldch_meshsize(struct rkisp_isp_params_vdev *params_vdev,
 				   struct rkisp_ldchbuf_size *ldchsize)
 {
-	int mesh_w, mesh_h, map_align;
+	int mesh_w, mesh_h, map_align, height;
+
+	height = ldchsize->meas_height;
+	if (params_vdev->dev->isp_ver == ISP_V20)
+		height += RKMODULE_EXTEND_LINE;
 
 	mesh_w = ((ldchsize->meas_width + (1 << 4) - 1) >> 4) + 1;
-	mesh_h = ((ldchsize->meas_height + (1 << 3) - 1) >> 3) + 1;
+	mesh_h = ((height + (1 << 3) - 1) >> 3) + 1;
 
 	map_align = ((mesh_w + 1) >> 1) << 1;
 	return map_align * mesh_h;
@@ -4331,6 +4384,12 @@ rkisp_params_set_ldchbuf_size_v2x(struct rkisp_isp_params_vdev *params_vdev,
 {
 	rkisp_deinit_ldch_buf(params_vdev);
 	rkisp_init_ldch_buf(params_vdev, ldchsize);
+}
+
+static void
+rkisp_params_fop_release_v2x(struct rkisp_isp_params_vdev *params_vdev)
+{
+	rkisp_deinit_ldch_buf(params_vdev);
 }
 
 /* Not called when the camera active, thus not isr protection. */
@@ -4431,9 +4490,140 @@ rkisp_params_cfg_v2x(struct rkisp_isp_params_vdev *params_vdev,
 		params_vdev->rdbk_times = rdbk_times;
 	}
 
+    params_vdev->exposure = new_params->exposure;
 unlock:
 	params_vdev->cur_buf = cur_buf;
 	spin_unlock(&params_vdev->config_lock);
+}
+
+static void isp_hdrtmo_palhpa_reconfig(struct rkisp_isp_params_vdev *params_vdev, u32 lgmean)
+{
+	u16 set_lgmin, set_lgmax, palpha_0p18;
+	u32 palpha, max_palpha;
+	u32 cur_frame_id = 0;
+	u32 value = 0;
+
+	set_lgmin = params_vdev->cur_hdrtmo.set_lgmin;
+	set_lgmax = params_vdev->cur_hdrtmo.set_lgmax;
+	palpha_0p18 = params_vdev->cur_hdrtmo.palpha_0p18;
+	max_palpha = params_vdev->cur_hdrtmo.maxpalpha;
+
+	palpha = palpha_0p18 * (4 * lgmean - 3 * set_lgmin - set_lgmax) / (set_lgmax - set_lgmin);
+	palpha = min(palpha, max_palpha);
+
+	rkisp_dmarx_get_frame(params_vdev->dev, &cur_frame_id, NULL, NULL, true);
+
+	value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_CFG0) & 0xfffffc00;
+	value |= palpha;
+	rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG0);
+
+	v4l2_dbg(5, rkisp_debug, &params_vdev->dev->v4l2_dev,
+			"frame(%d), palpha(%d)\n",
+			cur_frame_id, palpha);
+}
+
+static void isp_hdrtmo_lgavgmax_reconfig(struct rkisp_isp_params_vdev *params_vdev,
+					 s32 lgmean)
+{
+	u8 weight_key;
+	u16 set_lgmax;
+	s32 lgrange1 = 0, lgavgmax = 0;
+	u32 cur_frame_id, value;
+
+	set_lgmax = params_vdev->cur_hdrtmo.set_lgmax;
+	lgrange1 = params_vdev->cur_hdrtmo.set_lgrange1;
+	weight_key = params_vdev->cur_hdrtmo.set_weightkey;
+
+	if (params_vdev->cur_hdrtmo.predict.global_tmo) {
+		lgavgmax = lgmean;
+	} else {
+		lgavgmax = weight_key * set_lgmax + (256 - weight_key) * lgmean;
+		lgavgmax = min(lgavgmax / 256, lgrange1);
+	}
+
+	value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_CFG4) & 0xffff0000;
+	value |= lgavgmax;
+	rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG4);
+
+	rkisp_dmarx_get_frame(params_vdev->dev, &cur_frame_id, NULL, NULL, true);
+
+	v4l2_dbg(5, rkisp_debug, &params_vdev->dev->v4l2_dev,
+			"frame(%d), global_tmo(%d), lgavgmax(%d)\n",
+			cur_frame_id,
+			params_vdev->cur_hdrtmo.predict.global_tmo,
+			lgavgmax);
+}
+
+static void isp_hdrtmo_lgrange1_reconfig(struct rkisp_isp_params_vdev *params_vdev,
+					 s32 lgmean)
+{
+	if (params_vdev->cur_hdrtmo.predict.global_tmo) {
+		s32 lgrange1 = 0;
+		u32 cur_frame_id, value;
+
+		lgrange1 = lgmean;
+		value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_CFG3) & 0xffff;
+		value |= lgrange1 << 16;
+		rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG3);
+
+		rkisp_dmarx_get_frame(params_vdev->dev, &cur_frame_id, NULL, NULL, true);
+
+		v4l2_dbg(5, rkisp_debug, &params_vdev->dev->v4l2_dev,
+				"frame(%d), global_tmo(%d), lgrange1(%d)\n",
+				cur_frame_id,
+				params_vdev->cur_hdrtmo.predict.global_tmo,
+				lgrange1);
+	}
+}
+
+static u16 isp_hdrtmo_lgmean_reconfig(struct rkisp_isp_params_vdev *params_vdev)
+{
+	u16 default_lgmean = 40000;
+	u16 lgmean = default_lgmean;
+	u32 value = 0;
+	s32 cur_frame_id = 0;
+	static s32 prev_lgmean = 40000;
+
+	rkisp_dmarx_get_frame(params_vdev->dev, &cur_frame_id, NULL, NULL, true);
+	if (params_vdev->cur_hdrtmo.predict.iir < params_vdev->cur_hdrtmo.predict.iir_max) {
+		u32 ro_lgmean;
+		s32 iir = 0;
+		s32 global_tmo_strength = params_vdev->cur_hdrtmo.predict.global_tmo_strength;
+
+		value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_RO2);
+		ro_lgmean = value & 0xffff;
+
+		iir = min(cur_frame_id + 1, params_vdev->cur_hdrtmo.predict.iir);
+		default_lgmean += global_tmo_strength;
+		ro_lgmean +=  global_tmo_strength;
+		if (params_vdev->cur_hdrtmo.predict.scene_stable) {
+			if (cur_frame_id == 0)
+				lgmean = default_lgmean;
+			else
+				lgmean = ((iir - 1) * prev_lgmean + ro_lgmean) / iir;
+		} else {
+			if (cur_frame_id == 0)
+				lgmean = default_lgmean;
+			else
+				lgmean = prev_lgmean;
+		}
+	}
+
+	value = rkisp_ioread32(params_vdev, ISP_HDRTMO_LG_CFG2) & 0xffff0000;
+	value |= lgmean;
+	rkisp_iowrite32(params_vdev, value, ISP_HDRTMO_LG_CFG2);
+
+	prev_lgmean = lgmean;
+
+	v4l2_dbg(5, rkisp_debug, &params_vdev->dev->v4l2_dev,
+			"frame(%d), scene_stable(%d), k_rolgmean(%d), iir(%d), lgmean(%d)\n",
+			cur_frame_id,
+			params_vdev->cur_hdrtmo.predict.scene_stable,
+			params_vdev->cur_hdrtmo.predict.k_rolgmean,
+			params_vdev->cur_hdrtmo.predict.iir,
+			lgmean);
+
+	return lgmean;
 }
 
 static void
@@ -4443,7 +4633,7 @@ rkisp_params_isr_v2x(struct rkisp_isp_params_vdev *params_vdev,
 	struct rkisp_device *dev = params_vdev->dev;
 	u32 cur_frame_id;
 
-	rkisp_dmarx_get_frame(dev, &cur_frame_id, NULL, true);
+	rkisp_dmarx_get_frame(dev, &cur_frame_id, NULL, NULL, true);
 	if (isp_mis & CIF_ISP_V_START) {
 		if (!params_vdev->cur_buf)
 			return;
@@ -4466,6 +4656,17 @@ rkisp_params_isr_v2x(struct rkisp_isp_params_vdev *params_vdev,
 		}
 	}
 
+	if (isp_mis & ISP2X_HDR_DONE) {
+		u16 lgmean = 0;
+
+		lgmean = isp_hdrtmo_lgmean_reconfig(params_vdev);
+		isp_hdrtmo_palhpa_reconfig(params_vdev, lgmean);
+		isp_hdrtmo_lgrange1_reconfig(params_vdev, lgmean);
+		isp_hdrtmo_lgavgmax_reconfig(params_vdev, lgmean);
+
+		writel(ISP2X_HDR_DONE, dev->base_addr + ISP_ISP_ICR);
+	}
+
 	if ((isp_mis & CIF_ISP_FRAME) && !IS_HDR_RDBK(dev->csi_dev.rd_mode))
 		rkisp_params_cfg_v2x(params_vdev, cur_frame_id, 0, RKISP_PARAMS_ALL);
 }
@@ -4481,6 +4682,7 @@ static struct rkisp_isp_params_ops rkisp_isp_params_ops_tbl = {
 	.param_cfgsram = rkisp_params_cfgsram_v2x,
 	.get_ldchbuf_inf = rkisp_params_get_ldchbuf_inf_v2x,
 	.set_ldchbuf_size = rkisp_params_set_ldchbuf_size_v2x,
+	.fop_release = rkisp_params_fop_release_v2x,
 };
 
 int rkisp_init_params_vdev_v2x(struct rkisp_isp_params_vdev *params_vdev)

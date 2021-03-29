@@ -8,7 +8,6 @@
  *
  * Some ideas are from marvell-cesa.c and s5p-sss.c driver.
  */
-
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
@@ -94,6 +93,9 @@ static void set_iv_reg(struct rk_crypto_info *dev, const u8 *iv, u32 iv_len)
 	u32 i;
 	u8 tmp_buf[4];
 	u32 base_iv;
+
+	if (!iv || iv_len == 0)
+		return;
 
 	base_iv = CRYPTO_CH0_IV_0;
 	/* write iv data to reg */
@@ -438,35 +440,16 @@ static void rk_iv_copyback(struct rk_crypto_info *dev)
 	u32 ivsize = crypto_ablkcipher_ivsize(tfm);
 
 	/* Update the IV buffer to contain the next IV for encryption mode. */
-	if (!IS_BC_DECRYPT(ctx->mode)) {
+	if (!IS_BC_DECRYPT(ctx->mode) && req->info) {
 		if (dev->aligned) {
 			memcpy(req->info, sg_virt(dev->sg_dst) +
-				dev->sg_dst->length - ivsize, ivsize);
+				dev->count - ivsize, ivsize);
 		} else {
 			memcpy(req->info, dev->addr_vir +
 				dev->count - ivsize, ivsize);
 		}
 	}
 
-}
-
-static void rk_update_iv(struct rk_crypto_info *dev)
-{
-	struct ablkcipher_request *req =
-		ablkcipher_request_cast(dev->async_req);
-	struct crypto_ablkcipher *tfm = crypto_ablkcipher_reqtfm(req);
-	struct rk_cipher_ctx *ctx = crypto_ablkcipher_ctx(tfm);
-	u32 ivsize = crypto_ablkcipher_ivsize(tfm);
-	u8 *new_iv = NULL;
-
-	if (IS_BC_DECRYPT(ctx->mode)) {
-		new_iv = ctx->iv;
-	} else {
-		new_iv = page_address(sg_page(dev->sg_dst)) +
-			 dev->sg_dst->offset + dev->sg_dst->length - ivsize;
-	}
-
-	set_iv_reg(dev, new_iv, ivsize);
 }
 
 /* return:
@@ -490,7 +473,6 @@ static int rk_ablk_rx(struct rk_crypto_info *dev)
 		}
 	}
 	if (dev->left_bytes) {
-		rk_update_iv(dev);
 		if (dev->aligned) {
 			if (sg_is_last(dev->sg_src)) {
 				dev_err(dev->dev, "[%s:%d] Lack of data\n",
@@ -554,9 +536,6 @@ static void rk_ablk_cra_exit(struct crypto_tfm *tfm)
 	struct rk_cipher_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	CRYPTO_TRACE();
-
-	/* clear BC_CTL */
-	CRYPTO_WRITE(ctx->dev, CRYPTO_BC_CTL, 0 | CRYPTO_WRITE_MASK_ALL);
 
 	if (ctx->fallback_tfm) {
 		CRYPTO_MSG("free fallback tfm");

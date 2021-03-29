@@ -3,17 +3,14 @@
 
 #include <media/videobuf2-dma-contig.h>
 #include <linux/delay.h>
-#include <linux/iommu.h>
 #include <linux/of_platform.h>
 #include "dev.h"
 #include "regs.h"
 
-static const struct vb2_mem_ops *g_ops = &vb2_dma_contig_memops;
-
 void rkispp_write(struct rkispp_device *dev, u32 reg, u32 val)
 {
 	u32 *mem = dev->sw_base_addr + reg;
-	u32 *flag = dev->sw_base_addr + reg + ISPP_SW_REG_SIZE;
+	u32 *flag = dev->sw_base_addr + reg + RKISP_ISPP_SW_REG_SIZE;
 
 	*mem = val;
 	*flag = SW_REG_CACHE;
@@ -51,13 +48,13 @@ void rkispp_update_regs(struct rkispp_device *dev, u32 start, u32 end)
 	void __iomem *base = dev->hw_dev->base_addr;
 	u32 i;
 
-	if (end > ISPP_SW_REG_SIZE - 4) {
+	if (end > RKISP_ISPP_SW_REG_SIZE - 4) {
 		dev_err(dev->dev, "%s out of range\n", __func__);
 		return;
 	}
 	for (i = start; i <= end; i += 4) {
 		u32 *val = dev->sw_base_addr + i;
-		u32 *flag = dev->sw_base_addr + i + ISPP_SW_REG_SIZE;
+		u32 *flag = dev->sw_base_addr + i + RKISP_ISPP_SW_REG_SIZE;
 
 		if (*flag == SW_REG_CACHE)
 			writel(*val, base + i);
@@ -68,6 +65,8 @@ int rkispp_allow_buffer(struct rkispp_device *dev,
 			struct rkispp_dummy_buffer *buf)
 {
 	unsigned long attrs = buf->is_need_vaddr ? 0 : DMA_ATTR_NO_KERNEL_MAPPING;
+	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
+	struct sg_table  *sg_tbl;
 	void *mem_priv;
 	int ret = 0;
 
@@ -76,6 +75,9 @@ int rkispp_allow_buffer(struct rkispp_device *dev,
 		goto err;
 	}
 
+	if (dev->hw_dev->is_dma_contig)
+		attrs |= DMA_ATTR_FORCE_CONTIGUOUS;
+	buf->size = PAGE_ALIGN(buf->size);
 	mem_priv = g_ops->alloc(dev->hw_dev->dev, attrs, buf->size,
 				DMA_BIDIRECTIONAL, GFP_KERNEL);
 	if (IS_ERR_OR_NULL(mem_priv)) {
@@ -84,8 +86,13 @@ int rkispp_allow_buffer(struct rkispp_device *dev,
 	}
 
 	buf->mem_priv = mem_priv;
-	buf->dma_addr = *((dma_addr_t *)g_ops->cookie(mem_priv));
-	if (!attrs)
+	if (dev->hw_dev->is_mmu) {
+		sg_tbl = (struct sg_table *)g_ops->cookie(mem_priv);
+		buf->dma_addr = sg_dma_address(sg_tbl->sgl);
+	} else {
+		buf->dma_addr = *((dma_addr_t *)g_ops->cookie(mem_priv));
+	}
+	if (buf->is_need_vaddr)
 		buf->vaddr = g_ops->vaddr(mem_priv);
 	if (buf->is_need_dbuf) {
 		buf->dbuf = g_ops->get_dmabuf(mem_priv, O_RDWR);
@@ -111,6 +118,8 @@ err:
 void rkispp_free_buffer(struct rkispp_device *dev,
 			struct rkispp_dummy_buffer *buf)
 {
+	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
+
 	if (buf && buf->mem_priv) {
 		v4l2_dbg(1, rkispp_debug, &dev->v4l2_dev,
 			 "%s buf:0x%x~0x%x\n", __func__,
@@ -126,6 +135,24 @@ void rkispp_free_buffer(struct rkispp_device *dev,
 		buf->is_need_vaddr = false;
 		buf->is_need_dmafd = false;
 	}
+}
+
+void rkispp_prepare_buffer(struct rkispp_device *dev,
+			struct rkispp_dummy_buffer *buf)
+{
+	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
+
+	if (buf && buf->mem_priv)
+		g_ops->prepare(buf->mem_priv);
+}
+
+void rkispp_finish_buffer(struct rkispp_device *dev,
+			struct rkispp_dummy_buffer *buf)
+{
+	const struct vb2_mem_ops *g_ops = dev->hw_dev->mem_ops;
+
+	if (buf && buf->mem_priv)
+		g_ops->finish(buf->mem_priv);
 }
 
 int rkispp_attach_hw(struct rkispp_device *ispp)
@@ -164,8 +191,69 @@ int rkispp_attach_hw(struct rkispp_device *ispp)
 	return 0;
 }
 
+static int rkispp_init_regbuf(struct rkispp_hw_dev *hw)
+{
+	struct rkisp_ispp_reg *reg_buf;
+	u32 i, buf_size;
+
+	if (!rkispp_is_reg_withstream_global()) {
+		hw->reg_buf = NULL;
+		return 0;
+	}
+
+	buf_size = RKISP_ISPP_REGBUF_NUM * sizeof(struct rkisp_ispp_reg);
+	hw->reg_buf = vmalloc(buf_size);
+	if (!hw->reg_buf)
+		return -ENOMEM;
+
+	reg_buf = hw->reg_buf;
+	for (i = 0; i < RKISP_ISPP_REGBUF_NUM; i++) {
+		reg_buf[i].stat = ISP_ISPP_FREE;
+		reg_buf[i].dev_id = 0xFF;
+		reg_buf[i].frame_id = 0;
+		reg_buf[i].reg_size = 0;
+		reg_buf[i].sof_timestamp = 0LL;
+		reg_buf[i].frame_timestamp = 0LL;
+	}
+
+	return 0;
+}
+
+static void rkispp_free_regbuf(struct rkispp_hw_dev *hw)
+{
+	if (hw->reg_buf) {
+		vfree(hw->reg_buf);
+		hw->reg_buf = NULL;
+	}
+}
+
+static int rkispp_find_regbuf_by_stat(struct rkispp_hw_dev *hw, struct rkisp_ispp_reg **free_buf,
+				      enum rkisp_ispp_reg_stat stat)
+{
+	struct rkisp_ispp_reg *reg_buf = hw->reg_buf;
+	int i = 0, ret;
+
+	*free_buf = NULL;
+	if (!hw->reg_buf || !rkispp_reg_withstream)
+		return -EINVAL;
+
+	for (i = 0; i < RKISP_ISPP_REGBUF_NUM; i++) {
+		if (reg_buf[i].stat == stat)
+			break;
+	}
+
+	ret = -ENODATA;
+	if (i < RKISP_ISPP_REGBUF_NUM) {
+		ret = 0;
+		*free_buf = &reg_buf[i];
+	}
+
+	return ret;
+}
+
 static void rkispp_free_pool(struct rkispp_hw_dev *hw)
 {
+	const struct vb2_mem_ops *g_ops = hw->mem_ops;
 	struct rkispp_isp_buf_pool *buf;
 	int i, j;
 
@@ -188,11 +276,16 @@ static void rkispp_free_pool(struct rkispp_hw_dev *hw)
 		}
 		buf->dbufs = NULL;
 	}
+
+	rkispp_free_regbuf(hw);
+	hw->is_idle = true;
 }
 
 static int rkispp_init_pool(struct rkispp_hw_dev *hw, struct rkisp_ispp_buf *dbufs)
 {
+	const struct vb2_mem_ops *g_ops = hw->mem_ops;
 	struct rkispp_isp_buf_pool *pool;
+	struct sg_table	 *sg_tbl;
 	int i, ret = 0;
 	void *mem;
 
@@ -219,11 +312,20 @@ static int rkispp_init_pool(struct rkispp_hw_dev *hw, struct rkisp_ispp_buf *dbu
 		ret = g_ops->map_dmabuf(mem);
 		if (ret)
 			goto err;
-		pool->dma[i] = *((dma_addr_t *)g_ops->cookie(mem));
+		if (hw->is_mmu) {
+			sg_tbl = (struct sg_table *)g_ops->cookie(mem);
+			pool->dma[i] = sg_dma_address(sg_tbl->sgl);
+		} else {
+			pool->dma[i] = *((dma_addr_t *)g_ops->cookie(mem));
+		}
 		if (rkispp_debug)
 			dev_info(hw->dev, "%s dma[%d]:0x%x\n",
 				 __func__, i, (u32)pool->dma[i]);
+
+		pool->vaddr[i] = g_ops->vaddr(mem);
 	}
+	rkispp_init_regbuf(hw);
+	hw->is_idle = true;
 	return ret;
 err:
 	rkispp_free_pool(hw);
@@ -242,6 +344,8 @@ static void rkispp_queue_dmabuf(struct rkispp_hw_dev *hw, struct rkisp_ispp_buf 
 	spin_lock_irqsave(&hw->buf_lock, lock_flags);
 	if (!dbufs)
 		hw->is_idle = true;
+	if (hw->is_shutdown)
+		hw->is_idle = false;
 	if (dbufs && list_empty(list) && hw->is_idle) {
 		/* ispp idle or handle same device */
 		buf = dbufs;
@@ -263,6 +367,7 @@ static void rkispp_queue_dmabuf(struct rkispp_hw_dev *hw, struct rkisp_ispp_buf 
 		ispp = hw->ispp[buf->index];
 		vdev = &ispp->stream_vdev;
 		val = (vdev->module_ens & ISPP_MODULE_TNR) ? ISPP_MODULE_TNR : ISPP_MODULE_NR;
+		rkispp_params_cfg(&ispp->params_vdev, buf->frame_id);
 		rkispp_module_work_event(ispp, buf, NULL, val, false);
 	}
 
@@ -297,17 +402,65 @@ int rkispp_event_handle(struct rkispp_device *ispp, u32 cmd, void *arg)
 	return ret;
 }
 
-void rkispp_soft_reset(struct rkispp_device *ispp)
+static int rkispp_alloc_page_dummy_buf(struct rkispp_device *dev, u32 size)
 {
-	struct rkispp_hw_dev *hw = ispp->hw_dev;
-	struct iommu_domain *domain = iommu_get_domain_for_dev(hw->dev);
+	struct rkispp_hw_dev *hw = dev->hw_dev;
+	struct rkispp_dummy_buffer *dummy_buf = &hw->dummy_buf;
+	u32 i, n_pages = PAGE_ALIGN(size) >> PAGE_SHIFT;
+	struct page *page = NULL, **pages = NULL;
+	struct sg_table *sg = NULL;
+	int ret = -ENOMEM;
 
-	if (domain)
-		iommu_detach_device(domain, hw->dev);
-	writel(GLB_SOFT_RST_ALL, hw->base_addr + RKISPP_CTRL_RESET);
-	udelay(10);
-	if (domain)
-		iommu_attach_device(domain, hw->dev);
+	page = alloc_pages(GFP_KERNEL, 0);
+	if (!page)
+		goto err;
+
+	pages = kvmalloc_array(n_pages, sizeof(struct page *), GFP_KERNEL);
+	if (!pages)
+		goto free_page;
+	for (i = 0; i < n_pages; i++)
+		pages[i] = page;
+
+	sg = kmalloc(sizeof(struct sg_table), GFP_KERNEL);
+	if (!sg)
+		goto free_pages;
+	ret = sg_alloc_table_from_pages(sg, pages, n_pages, 0,
+					n_pages << PAGE_SHIFT, GFP_KERNEL);
+	if (ret)
+		goto free_sg;
+
+	ret = dma_map_sg(hw->dev, sg->sgl, sg->nents, DMA_BIDIRECTIONAL);
+	dummy_buf->dma_addr = sg_dma_address(sg->sgl);
+	dummy_buf->mem_priv = sg;
+	dummy_buf->pages = pages;
+	v4l2_dbg(1, rkispp_debug, &dev->v4l2_dev,
+		 "%s buf:0x%x map cnt:%d\n", __func__,
+		 (u32)dummy_buf->dma_addr, ret);
+	return 0;
+free_sg:
+	kfree(sg);
+free_pages:
+	kvfree(pages);
+free_page:
+	__free_pages(page, 0);
+err:
+	return ret;
+}
+
+static void rkispp_free_page_dummy_buf(struct rkispp_device *dev)
+{
+	struct rkispp_dummy_buffer *dummy_buf = &dev->hw_dev->dummy_buf;
+	struct sg_table *sg = dummy_buf->mem_priv;
+
+	if (!sg)
+		return;
+	dma_unmap_sg(dev->hw_dev->dev, sg->sgl, sg->nents, DMA_BIDIRECTIONAL);
+	sg_free_table(sg);
+	kfree(sg);
+	__free_pages(dummy_buf->pages[0], 0);
+	kvfree(dummy_buf->pages);
+	dummy_buf->mem_priv = NULL;
+	dummy_buf->pages = NULL;
 }
 
 int rkispp_alloc_common_dummy_buf(struct rkispp_device *dev)
@@ -321,29 +474,117 @@ int rkispp_alloc_common_dummy_buf(struct rkispp_device *dev)
 	int ret = 0;
 
 	mutex_lock(&hw->dev_lock);
-	if (dummy_buf->mem_priv) {
-		if (dummy_buf->size >= size)
-			goto end;
-		rkispp_free_buffer(dev, &dev->hw_dev->dummy_buf);
-	}
-	dummy_buf->size = w * h * 2;
-	ret = rkispp_allow_buffer(dev, dummy_buf);
-	if (ret < 0)
-		v4l2_err(&dev->v4l2_dev,
-			 "failed to alloc common dummy buf:%d\n", ret);
-	else
-		v4l2_dbg(1, rkispp_debug, &dev->v4l2_dev,
-			 "alloc common dummy buf:0x%x size:%d\n",
-			 (u32)dummy_buf->dma_addr, dummy_buf->size);
+	if (dummy_buf->mem_priv)
+		goto end;
 
+	if (hw->is_mmu) {
+		ret = rkispp_alloc_page_dummy_buf(dev, size);
+		goto end;
+	}
+
+	dummy_buf->size = size;
+	ret = rkispp_allow_buffer(dev, dummy_buf);
+	if (!ret)
+		v4l2_dbg(1, rkispp_debug, &dev->v4l2_dev,
+			 "%s buf:0x%x size:%d\n", __func__,
+			 (u32)dummy_buf->dma_addr, dummy_buf->size);
 end:
+	if (ret < 0)
+		v4l2_err(&dev->v4l2_dev, "%s failed:%d\n", __func__, ret);
 	mutex_unlock(&hw->dev_lock);
 	return ret;
 }
 
 void rkispp_free_common_dummy_buf(struct rkispp_device *dev)
 {
-	mutex_lock(&dev->hw_dev->dev_lock);
-	rkispp_free_buffer(dev, &dev->hw_dev->dummy_buf);
-	mutex_unlock(&dev->hw_dev->dev_lock);
+	struct rkispp_hw_dev *hw = dev->hw_dev;
+
+	mutex_lock(&hw->dev_lock);
+	if (atomic_read(&hw->refcnt) ||
+	    atomic_read(&dev->stream_vdev.refcnt) > 1)
+		goto end;
+	if (hw->is_mmu)
+		rkispp_free_page_dummy_buf(dev);
+	else
+		rkispp_free_buffer(dev, &hw->dummy_buf);
+end:
+	mutex_unlock(&hw->dev_lock);
+}
+
+int rkispp_find_regbuf_by_id(struct rkispp_device *ispp, struct rkisp_ispp_reg **free_buf,
+			     u32 dev_id, u32 frame_id)
+{
+	struct rkispp_hw_dev *hw = ispp->hw_dev;
+	struct rkisp_ispp_reg *reg_buf = hw->reg_buf;
+	int i = 0, ret;
+
+	*free_buf = NULL;
+	if (!hw->reg_buf)
+		return -EINVAL;
+
+	for (i = 0; i < RKISP_ISPP_REGBUF_NUM; i++) {
+		if (reg_buf[i].dev_id == dev_id && reg_buf[i].frame_id == frame_id)
+			break;
+	}
+
+	ret = -ENODATA;
+	if (i < RKISP_ISPP_REGBUF_NUM) {
+		ret = 0;
+		*free_buf = &reg_buf[i];
+	}
+
+	return ret;
+}
+
+void rkispp_release_regbuf(struct rkispp_device *ispp, struct rkisp_ispp_reg *freebuf)
+{
+	struct rkispp_hw_dev *hw = ispp->hw_dev;
+	struct rkisp_ispp_reg *reg_buf = hw->reg_buf;
+	int i;
+
+	if (!hw->reg_buf)
+		return;
+
+	for (i = 0; i < RKISP_ISPP_REGBUF_NUM; i++) {
+		if (reg_buf[i].dev_id == freebuf->dev_id &&
+			reg_buf[i].frame_timestamp < freebuf->frame_timestamp) {
+			reg_buf[i].frame_id = 0;
+			reg_buf[i].stat = ISP_ISPP_FREE;
+		}
+	}
+}
+
+void rkispp_request_regbuf(struct rkispp_device *dev, struct rkisp_ispp_reg **free_buf)
+{
+	struct rkispp_hw_dev *hw = dev->hw_dev;
+	int ret;
+
+	if (!hw->reg_buf) {
+		*free_buf = NULL;
+		return;
+	}
+
+	ret = rkispp_find_regbuf_by_stat(hw, free_buf, ISP_ISPP_FREE);
+	if (!ret) {
+		(*free_buf)->stat = ISP_ISPP_INUSE;
+	}
+}
+
+bool rkispp_is_reg_withstream_global(void)
+{
+	return rkispp_reg_withstream;
+}
+
+bool rkispp_is_reg_withstream_local(struct device *dev)
+{
+	const char *node_name = dev_name(dev);
+
+	if (!node_name)
+		return false;
+
+	if (!memcmp(rkispp_reg_withstream_video_name, node_name,
+		    strlen(node_name)))
+		return true;
+	else
+		return false;
 }

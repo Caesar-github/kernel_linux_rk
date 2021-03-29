@@ -6,9 +6,6 @@
 #ifndef _RKISP_REGS_V2X_H
 #define _RKISP_REGS_V2X_H
 
-#define ISP_SW_REG_SIZE					0x6000
-#define ISP_SW_MAX_SIZE					(ISP_SW_REG_SIZE * 2)
-
 #define CTRL_BASE					0x00000000
 #define CTRL_VI_ISP_EN					(CTRL_BASE + 0x00000)
 #define CTRL_VI_ISP_PATH				(CTRL_BASE + 0x00004)
@@ -430,6 +427,7 @@
 #define MI_WR_ID				(MI_BASE + 0x00154)
 #define MI_MP_WR_Y_IRQ_OFFS2			(MI_BASE + 0x001e0)
 #define MI_MP_WR_Y_IRQ_OFFS2_SHD		(MI_BASE + 0x001e4)
+#define MI_MP_WR_Y_LLENGTH			(MI_BASE + 0x001e8)
 #define MI_WR_CTRL2				(MI_BASE + 0x00400)
 #define MI_WR_ID2				(MI_BASE + 0x00404)
 #define MI_RD_CTRL2				(MI_BASE + 0x00408)
@@ -2239,6 +2237,8 @@
 #define ISP2X_SYS_DHAZ_FST		BIT(25)
 #define ISP2X_SYS_CNR_FST		BIT(26)
 #define ISP2X_SYS_BAY3D_FST		BIT(27)
+#define ISP2X_SYS_BIGMODE_FORCEEN	BIT(28)
+#define ISP2X_SYS_BIGMODE_MANUAL	BIT(29)
 
 /* isp interrupt */
 #define ISP2X_OFF			BIT(0)
@@ -2597,6 +2597,8 @@ static inline void raw_wr_set_pic_size(struct rkisp_stream *stream,
 {
 	void __iomem *base = stream->ispdev->base_addr;
 
+	if (stream->out_isp_fmt.fmt_type == FMT_YUV)
+		width *= 2;
 	writel(height << 16 | width,
 	       base + stream->config->dma.pic_size);
 }
@@ -2648,16 +2650,6 @@ static inline void mi_raw1_rd_set_addr(void __iomem *base, u32 val)
 static inline void mi_raw2_rd_set_addr(void __iomem *base, u32 val)
 {
 	writel(val, base + MI_RAW2_RD_BASE);
-}
-
-static inline void raw_rd_set_pic_size(struct rkisp_stream *stream)
-{
-	struct rkisp_device *dev = stream->ispdev;
-	u32 w = stream->out_fmt.width;
-	u32 h = dev->isp_sdev.in_crop.top + dev->isp_sdev.in_crop.height;
-
-	/* rx height should equal to isp height + offset */
-	rkisp_write(dev, CSI2RX_RAW_RD_PIC_SIZE, h << 16 | w, false);
 }
 
 static inline void raw_rd_ctrl(void __iomem *base, u32 val)

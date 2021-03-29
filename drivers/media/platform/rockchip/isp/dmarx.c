@@ -9,6 +9,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 #include <linux/dma-iommu.h>
 #include "dev.h"
 #include "regs.h"
@@ -320,10 +321,8 @@ static int rawrd_config_mi(struct rkisp_stream *stream)
 		val |= CIF_CSI2_DT_RAW12;
 	}
 	rkisp_write(dev, CSI2RX_DATA_IDS_1, val, false);
-	raw_rd_set_pic_size(stream);
-	rkisp_set_bits(dev, CSI2RX_RAW_RD_CTRL, 0,
-		       dev->csi_dev.memory << 2 |
-		       1 << (stream->id - 1), true);
+	rkisp_rawrd_set_pic_size(dev, stream->out_fmt.width,
+				 stream->out_fmt.height);
 	mi_raw_length(stream);
 	v4l2_dbg(1, rkisp_debug, &dev->v4l2_dev,
 		 "%s id:%d 0x%x %dx%d\n", __func__,
@@ -374,14 +373,6 @@ static void update_rawrd(struct rkisp_stream *stream)
 			val = readl(base + rawwr_addr);
 		}
 		mi_set_y_addr(stream, val);
-#if RKISP_NORMAL_MERGE_EN
-		if (dev->isp_ver == ISP_V20 &&
-		    dev->csi_dev.rd_mode == HDR_RDBK_FRAME1) {
-			rkisp_write(dev, MI_RAW0_RD_BASE, val, true);
-			rkisp_write(dev, MI_RAW0_RD_LENGTH,
-				rkisp_read(dev, MI_RAW2_RD_LENGTH, true), true);
-		}
-#endif
 	}
 }
 
@@ -497,12 +488,18 @@ static void rkisp_buf_queue(struct vb2_buffer *vb)
 	unsigned long lock_flags = 0;
 	struct v4l2_pix_format_mplane *pixm = &stream->out_fmt;
 	struct capture_fmt *isp_fmt = &stream->out_isp_fmt;
+	struct sg_table *sgt;
 	int i;
 
 	memset(ispbuf->buff_addr, 0, sizeof(ispbuf->buff_addr));
-	for (i = 0; i < isp_fmt->mplanes; i++)
-		ispbuf->buff_addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
-
+	for (i = 0; i < isp_fmt->mplanes; i++) {
+		if (stream->ispdev->hw_dev->is_mmu) {
+			sgt = vb2_dma_sg_plane_desc(vb, i);
+			ispbuf->buff_addr[i] = sg_dma_address(sgt->sgl);
+		} else {
+			ispbuf->buff_addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
+		}
+	}
 	/*
 	 * NOTE: plane_fmt[0].sizeimage is total size of all planes for single
 	 * memory plane formats, so calculate the size explicitly.
@@ -611,11 +608,11 @@ static int rkisp_init_vb2_queue(struct vb2_queue *q,
 	q->io_modes = VB2_MMAP | VB2_DMABUF | VB2_USERPTR;
 	q->drv_priv = stream;
 	q->ops = &dmarx_vb2_ops;
-	q->mem_ops = &vb2_dma_contig_memops;
+	q->mem_ops = stream->ispdev->hw_dev->mem_ops;
 	q->buf_struct_size = sizeof(struct rkisp_buffer);
 	q->min_buffers_needed = CIF_ISP_REQ_BUFS_MIN;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	q->lock = &stream->ispdev->apilock;
+	q->lock = &stream->apilock;
 	q->dev = stream->ispdev->hw_dev->dev;
 	q->allow_cache_hints = 1;
 	q->bidirectional = 1;
@@ -666,8 +663,14 @@ static int rkisp_set_fmt(struct rkisp_stream *stream,
 			height = pixm->height / ysubs;
 		}
 
+		if (stream->ispdev->isp_ver == ISP_V20 &&
+		    stream->id == RKISP_STREAM_RAWRD2 &&
+		    fmt->fmt_type == FMT_BAYER)
+			height += RKMODULE_EXTEND_LINE;
+
 		if ((stream->ispdev->isp_ver == ISP_V20 ||
 		     stream->ispdev->isp_ver == ISP_V21) &&
+		    fmt->fmt_type == FMT_BAYER &&
 		    !stream->ispdev->csi_dev.memory &&
 		    stream->id != RKISP_STREAM_DMARX)
 			bytesperline = ALIGN(width * fmt->bpp[i] / 8, 256);
@@ -814,13 +817,14 @@ static int rkisp_register_dmarx_video(struct rkisp_stream *stream)
 	struct rkisp_vdev_node *node;
 	int ret = 0;
 
+	mutex_init(&stream->apilock);
 	node = vdev_to_node(vdev);
 
 	vdev->release = video_device_release_empty;
 	vdev->fops = &rkisp_fops;
 	vdev->minor = -1;
 	vdev->v4l2_dev = v4l2_dev;
-	vdev->lock = &dev->apilock;
+	vdev->lock = &stream->apilock;
 	video_set_drvdata(vdev, stream);
 
 	vdev->ioctl_ops = &rkisp_dmarx_ioctl;
@@ -949,11 +953,36 @@ static int dmarx_init(struct rkisp_device *dev, u32 id)
 		RKISP_ISP_PAD_SINK, stream->linked);
 }
 
-void rkisp_dmarx_get_frame(struct rkisp_device *dev,
-			   u32 *id, u64 *timestamp, bool sync)
+void rkisp_dmarx_set_fmt(struct rkisp_stream *stream,
+			 struct v4l2_pix_format_mplane pixm)
+{
+	rkisp_set_fmt(stream, &pixm, false);
+}
+
+void rkisp_rawrd_set_pic_size(struct rkisp_device *dev,
+			      u32 width, u32 height)
+{
+	struct rkisp_isp_subdev *sdev = &dev->isp_sdev;
+
+	/* rx height should equal to isp height + offset for read back mode */
+	height = sdev->in_crop.top + sdev->in_crop.height;
+
+	/* isp20 extend line for normal read back mode to fix internal bug */
+	if (dev->isp_ver == ISP_V20 &&
+	    sdev->in_fmt.fmt_type == FMT_BAYER &&
+	    sdev->out_fmt.fmt_type != FMT_BAYER &&
+	    dev->csi_dev.rd_mode == HDR_RDBK_FRAME1)
+		height += RKMODULE_EXTEND_LINE;
+
+	rkisp_write(dev, CSI2RX_RAW_RD_PIC_SIZE, height << 16 | width, false);
+}
+
+void rkisp_dmarx_get_frame(struct rkisp_device *dev, u32 *id,
+			   u64 *sof_timestamp, u64 *timestamp,
+			   bool sync)
 {
 	unsigned long flag = 0;
-	u64 frame_timestamp = 0;
+	u64 sof_time = 0, frame_timestamp = 0;
 	u32 frame_id = 0;
 
 	if (!dev->dmarx_dev.trigger && id) {
@@ -964,14 +993,18 @@ void rkisp_dmarx_get_frame(struct rkisp_device *dev,
 	spin_lock_irqsave(&dev->csi_dev.rdbk_lock, flag);
 	if (sync) {
 		frame_id = dev->dmarx_dev.cur_frame.id;
+		sof_time = dev->dmarx_dev.cur_frame.sof_timestamp;
 		frame_timestamp = dev->dmarx_dev.cur_frame.timestamp;
 	} else {
 		frame_id = dev->dmarx_dev.pre_frame.id;
+		sof_time = dev->dmarx_dev.pre_frame.sof_timestamp;
 		frame_timestamp = dev->dmarx_dev.pre_frame.timestamp;
 	}
 	spin_unlock_irqrestore(&dev->csi_dev.rdbk_lock, flag);
 	if (id)
 		*id = frame_id;
+	if (sof_timestamp)
+		*sof_timestamp = sof_time;
 	if (timestamp)
 		*timestamp = frame_timestamp;
 }

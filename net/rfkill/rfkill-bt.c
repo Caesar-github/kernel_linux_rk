@@ -284,7 +284,7 @@ static int rfkill_rk_set_power(void *data, bool blocked)
 	struct rfkill_rk_gpio *reset = &rfkill->pdata->reset_gpio;
 	struct rfkill_rk_gpio *rts = &rfkill->pdata->rts_gpio;
 	struct pinctrl *pinctrl = rfkill->pdata->pinctrl;
-	int power = 0, vref_ctrl_enable = 0;
+	int wifi_power = 0;
 	bool toggle = false;
 
 	DBG("Enter %s\n", __func__);
@@ -292,18 +292,22 @@ static int rfkill_rk_set_power(void *data, bool blocked)
 	DBG("Set blocked:%d\n", blocked);
 
 	toggle = rfkill->pdata->power_toggle;
-	if (!rfkill_get_wifi_power_state(&power, &vref_ctrl_enable)) {
-		if (toggle && 1 == power) {
-			LOG("%s: bt shouldn't control the power\n",
-			    __func__);
-			return 0;
+
+	if (toggle) {
+		if (rfkill_get_wifi_power_state(&wifi_power)) {
+			LOG("%s: cannot get wifi power state!\n", __func__);
+			return -1;
 		}
-	} else {
-		LOG("%s: cannot get wifi power state!\n", __func__);
-		return -1;
 	}
 
+	DBG("%s: toggle = %s\n", __func__, toggle ? "true" : "false");
+
 	if (!blocked) {
+		if (toggle) {
+			rfkill_set_wifi_bt_power(1);
+			msleep(100);
+		}
+
 		rfkill_rk_sleep_bt(BT_WAKEUP); // ensure bt is wakeup
 
 		if (gpio_is_valid(wake_host->io)) {
@@ -365,6 +369,14 @@ static int rfkill_rk_set_power(void *data, bool blocked)
 				msleep(20);
 			}
 		}
+		if (toggle) {
+			if (!wifi_power) {
+				LOG("%s: bt will set vbat to low\n", __func__);
+				rfkill_set_wifi_bt_power(0);
+			} else {
+				LOG("%s: bt shouldn't control the vbat\n", __func__);
+			}
+		}
 	}
 
 	return 0;
@@ -397,7 +409,7 @@ static int rfkill_rk_pm_prepare(struct device *dev)
 #endif
 
 	// enable bt wakeup host
-	if (gpio_is_valid(wake_host_irq->gpio.io)) {
+	if (gpio_is_valid(wake_host_irq->gpio.io) && bt_power_state) {
 		DBG("enable irq for bt wakeup host\n");
 		enable_irq(wake_host_irq->irq);
 	}
@@ -425,7 +437,7 @@ static void rfkill_rk_pm_complete(struct device *dev)
 	wake_host_irq = &rfkill->pdata->wake_host_irq;
 	rts = &rfkill->pdata->rts_gpio;
 
-	if (gpio_is_valid(wake_host_irq->gpio.io)) {
+	if (gpio_is_valid(wake_host_irq->gpio.io) && bt_power_state) {
 		LOG("** disable irq\n");
 		disable_irq(wake_host_irq->irq);
 	}
@@ -481,6 +493,8 @@ static ssize_t bluesleep_write_proc_btwrite(struct file *file,
 	/* HCI_DEV_WRITE */
 	if (b != '0')
 		rfkill_rk_sleep_bt(BT_WAKEUP);
+	else
+		rfkill_rk_sleep_bt(BT_SLEEP);
 
 	return count;
 }

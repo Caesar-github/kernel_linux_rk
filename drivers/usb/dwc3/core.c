@@ -8,6 +8,7 @@
  *	    Sebastian Andrzej Siewior <bigeasy@linutronix.de>
  */
 
+#include <linux/async.h>
 #include <linux/clk.h>
 #include <linux/version.h>
 #include <linux/module.h>
@@ -269,16 +270,18 @@ runtime:
 disconnect:
 		switch (dwc->current_dr_role) {
 		case DWC3_GCTL_PRTCAP_HOST:
-			/*
-			 * We set device mode to disable otg-vbus supply and
-			 * enable vbus detect for inno USB2PHY.
-			 */
-			phy_set_mode(dwc->usb2_generic_phy,
-				     PHY_MODE_USB_DEVICE);
-			phy_set_mode(dwc->usb3_generic_phy,
-				     PHY_MODE_USB_DEVICE);
-			phy_power_off(dwc->usb3_generic_phy);
-			dwc3_host_exit(dwc);
+			if (dwc->drd_connected) {
+				/*
+				 * Set device mode to disable otg-vbus supply
+				 * and enable vbus detect for inno USB2PHY.
+				 */
+				phy_set_mode(dwc->usb2_generic_phy,
+					     PHY_MODE_USB_DEVICE);
+				phy_set_mode(dwc->usb3_generic_phy,
+					     PHY_MODE_USB_DEVICE);
+				phy_power_off(dwc->usb3_generic_phy);
+				dwc3_host_exit(dwc);
+			}
 			break;
 		case DWC3_GCTL_PRTCAP_DEVICE:
 			break;
@@ -290,8 +293,8 @@ disconnect:
 		}
 
 		/*
-		 * We should set drd_connected true before runtime_suspend to
-		 * enable reset assert.
+		 * We should set drd_connected to false before
+		 * runtime_suspend to enable reset assert.
 		 */
 		dwc->drd_connected = false;
 		pm_runtime_put_sync_suspend(dwc->dev);
@@ -1264,6 +1267,9 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
 				dev_err(dev, "failed to initialize gadget\n");
 			return ret;
 		}
+
+		if (dwc->uwk_en)
+			device_init_wakeup(dev, true);
 		break;
 	case USB_DR_MODE_HOST:
 		/*
@@ -1272,7 +1278,10 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
 		 * keep PD on and run phy_power_on again to avoid
 		 * phy_power_on failed (error -110) in Rockchip platform.
 		 */
-		device_init_wakeup(dev, true);
+		if (!of_machine_is_compatible("rockchip,rk3568") &&
+		    !of_machine_is_compatible("rockchip,rk3566"))
+			device_init_wakeup(dev, true);
+
 		phy_power_on(dwc->usb3_generic_phy);
 
 		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_HOST);
@@ -1304,10 +1313,16 @@ static int dwc3_core_init_mode(struct dwc3 *dwc)
 		}
 		ret = dwc3_drd_init(dwc);
 		if (ret) {
+			if (dwc->en_runtime)
+				dwc3_gadget_exit(dwc);
+
 			if (ret != -EPROBE_DEFER)
 				dev_err(dev, "failed to initialize dual-role\n");
 			return ret;
 		}
+
+		if (dwc->uwk_en)
+			device_init_wakeup(dev, true);
 		break;
 	default:
 		dev_err(dev, "Unsupported mode of operation %d\n", dwc->dr_mode);
@@ -1451,6 +1466,8 @@ static void dwc3_get_properties(struct dwc3 *dwc)
 				"snps,tx-fifo-resize");
 	dwc->xhci_warm_reset_on_suspend_quirk = device_property_read_bool(dev,
 				"snps,xhci-warm-reset-on-suspend-quirk");
+	dwc->uwk_en = device_property_read_bool(dev,
+				"wakeup-source");
 
 	dwc->lpm_nyet_threshold = lpm_nyet_threshold;
 	dwc->tx_de_emphasis = tx_de_emphasis;
@@ -1523,6 +1540,23 @@ static void dwc3_check_params(struct dwc3 *dwc)
 
 		break;
 	}
+}
+
+static void dwc3_rockchip_async_probe(void *data, async_cookie_t cookie)
+{
+	struct dwc3 *dwc = data;
+	struct device *dev = dwc->dev;
+	int id;
+
+	if (dwc->edev && !dwc->drd_connected) {
+		id = extcon_get_state(dwc->edev, EXTCON_USB_HOST);
+		if (id < 0)
+			id = 0;
+		dwc->current_dr_role = id ? DWC3_GCTL_PRTCAP_HOST :
+				       DWC3_GCTL_PRTCAP_DEVICE;
+	}
+
+	pm_runtime_put_sync_suspend(dev);
 }
 
 static int dwc3_probe(struct platform_device *pdev)
@@ -1671,12 +1705,27 @@ static int dwc3_probe(struct platform_device *pdev)
 		goto err5;
 
 	dwc3_debugfs_init(dwc);
-	pm_runtime_put(dev);
+
+	if (dwc->en_runtime)
+		async_schedule(dwc3_rockchip_async_probe, dwc);
+	else
+		pm_runtime_put(dev);
 
 	return 0;
 
 err5:
 	dwc3_event_buffers_cleanup(dwc);
+
+	usb_phy_shutdown(dwc->usb2_phy);
+	usb_phy_shutdown(dwc->usb3_phy);
+	phy_exit(dwc->usb2_generic_phy);
+	phy_exit(dwc->usb3_generic_phy);
+
+	usb_phy_set_suspend(dwc->usb2_phy, 1);
+	usb_phy_set_suspend(dwc->usb3_phy, 1);
+	phy_power_off(dwc->usb2_generic_phy);
+	phy_power_off(dwc->usb3_generic_phy);
+
 	dwc3_ulpi_exit(dwc);
 
 err4:
@@ -1715,9 +1764,9 @@ static int dwc3_remove(struct platform_device *pdev)
 	dwc3_core_exit(dwc);
 	dwc3_ulpi_exit(dwc);
 
-	pm_runtime_put_sync(&pdev->dev);
-	pm_runtime_allow(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
+	pm_runtime_put_noidle(&pdev->dev);
+	pm_runtime_set_suspended(&pdev->dev);
 
 	dwc3_free_event_buffers(dwc);
 	dwc3_free_scratch_buffers(dwc);
@@ -1973,6 +2022,12 @@ static int dwc3_suspend(struct device *dev)
 	struct dwc3	*dwc = dev_get_drvdata(dev);
 	int		ret;
 
+	if (dwc->uwk_en) {
+		dwc3_gadget_disable_irq(dwc);
+		synchronize_irq(dwc->irq_gadget);
+		return 0;
+	}
+
 	if (pm_runtime_suspended(dwc->dev))
 		return 0;
 
@@ -2011,6 +2066,11 @@ static int dwc3_resume(struct device *dev)
 {
 	struct dwc3	*dwc = dev_get_drvdata(dev);
 	int		ret;
+
+	if (dwc->uwk_en) {
+		dwc3_gadget_enable_irq(dwc);
+		return 0;
+	}
 
 	if (pm_runtime_suspended(dwc->dev))
 		return 0;

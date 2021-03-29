@@ -63,6 +63,30 @@
  *
  * v1.2.1:
  * 1. fix can't work due to last abnormal exit
+ *
+ * v1.2.2:
+ * 1. isp/ispp add lock for multi dev runtime
+ * 2. fix error state of monitor
+ * 3. fix mmu err due to buf free for multi dev
+ * 4. support output isp/ispp reg on each frame
+ * 5. fix error detected by depmod
+ *
+ * v1.3.0:
+ * 1. fec extend to independent video
+ * 2. reduce buf count
+ * 3. dummy buf map to one page if iommu enable
+ * 4. vb2 dma sg for iommu enable
+ *
+ * v1.4.1
+ * 1. support motion detection mode
+ * 2. fix panic for vmap at interrupt
+ * 3. add virtual video for iqtool
+ *
+ * v1.5.1
+ * 1. add vb2_rdma_sg_memops to support contiguous page
+ * 2. fix config of clk_dbg
+ * 3. check frame id when apply params
+ *
  */
 
 #define RKISPP_DRIVER_VERSION ISPP_API_VERSION

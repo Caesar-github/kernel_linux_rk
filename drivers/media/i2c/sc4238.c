@@ -6,6 +6,9 @@
  *
  * V0.0X01.0X00 first version.
  * V0.0X01.0X01 add quick stream on/off
+ * V0.0X01.0X02 support digital gain
+ * V0.0X01.0X03 support 2688x1520@30fps 10bit linear mode
+ * V0.0X01.0X04 fixed hdr exposure issue
  */
 //#define DEBUG
 #include <linux/clk.h>
@@ -28,7 +31,7 @@
 #include <linux/rk-preisp.h>
 #include "../platform/rockchip/isp/rkisp_tb_helper.h"
 
-#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x01)
+#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x04)
 
 #ifndef V4L2_CID_DIGITAL_GAIN
 #define V4L2_CID_DIGITAL_GAIN		V4L2_CID_GAIN
@@ -57,21 +60,24 @@
 
 #define SC4238_REG_EXP_LONG_H		0x3e00
 #define SC4238_REG_EXP_MID_H		0x3e04
-#define SC4238_REG_EXP_VS_H		0x3e04
+#define SC4238_REG_EXP_MAX_MID_H	0x3e23
 
 #define SC4238_REG_COARSE_AGAIN_L	0x3e08
 #define SC4238_REG_FINE_AGAIN_L		0x3e09
 #define SC4238_REG_COARSE_AGAIN_S	0x3e12
 #define SC4238_REG_FINE_AGAIN_S		0x3e13
+#define SC4238_REG_COARSE_DGAIN_L	0x3e06
+#define SC4238_REG_FINE_DGAIN_L		0x3e07
+#define SC4238_REG_COARSE_DGAIN_S	0x3e10
+#define SC4238_REG_FINE_DGAIN_S		0x3e11
 #define SC4238_GAIN_MIN			0x40
-#define SC4238_GAIN_MAX			0x3F8
+#define SC4238_GAIN_MAX			0x7D04
 #define SC4238_GAIN_STEP		1
 #define SC4238_GAIN_DEFAULT		0x80
 
 #define SC4238_GROUP_UPDATE_ADDRESS	0x3812
 #define SC4238_GROUP_UPDATE_START_DATA	0x00
 #define SC4238_GROUP_UPDATE_END_DATA	0x30
-#define SC4238_GROUP_UPDATE_END_LAUNCH	0x30
 #define SC4238_GROUP_UPDATE_DELAY	0x3802
 
 #define SC4238_SOFTWARE_RESET_REG	0x0103
@@ -175,12 +181,289 @@ struct sc4238 {
 	bool			is_thunderboot_ng;
 	bool			is_first_streamoff;
 	u8			flip;
+	u32			cur_vts;
 };
 
 #define to_sc4238(sd) container_of(sd, struct sc4238, subdev)
 
 static const struct regval sc4238_global_regs[] = {
 
+	{REG_NULL, 0x00},
+};
+
+/*
+ * Xclk 24Mhz
+ * max_framerate 30fps
+ * mipi_datarate per lane 337.5Mbps
+ */
+static const struct regval sc4238_linear10bit_2688x1520_regs[] = {
+	{0x0103, 0x01},
+	{0x0100, 0x00},
+	{0x36e9, 0x80},
+	{0x36f9, 0x80},
+	{0x3018, 0x72},
+	{0x301f, 0x9a},
+	{0x3031, 0x0a},
+	{0x3037, 0x20},
+	{0x3038, 0x22},
+	{0x3106, 0x81},
+	{0x3200, 0x00},
+	{0x3201, 0x00},
+	{0x3202, 0x00},
+	{0x3203, 0x00},
+	{0x3204, 0x0a},
+	{0x3205, 0x87},
+	{0x3206, 0x05},
+	{0x3207, 0xf7},
+	{0x3208, 0x0a},
+	{0x3209, 0x80},
+	{0x320a, 0x05},
+	{0x320b, 0xf0},
+	{0x320c, 0x05},
+	{0x320d, 0xa0},
+	{0x320e, 0x07},
+	{0x320f, 0x52},
+	{0x3211, 0x04},
+	{0x3213, 0x04},
+	{0x3251, 0x88},
+	{0x3253, 0x0a},
+	{0x325f, 0x0c},
+	{0x3273, 0x01},
+	{0x3301, 0x30},
+	{0x3304, 0x30},
+	{0x3306, 0x70},
+	{0x3308, 0x10},
+	{0x3309, 0x50},
+	{0x330b, 0xf0},
+	{0x330e, 0x14},
+	{0x3314, 0x94},
+	{0x331e, 0x29},
+	{0x331f, 0x49},
+	{0x3320, 0x09},
+	{0x334c, 0x10},
+	{0x3352, 0x02},
+	{0x3356, 0x1f},
+	{0x335e, 0x02},
+	{0x335f, 0x04},
+	{0x3363, 0x00},
+	{0x3364, 0x1e},
+	{0x3366, 0x92},
+	{0x336d, 0x03},
+	{0x337a, 0x08},
+	{0x337b, 0x10},
+	{0x337c, 0x06},
+	{0x337d, 0x0a},
+	{0x337f, 0x2d},
+	{0x3390, 0x08},
+	{0x3391, 0x18},
+	{0x3392, 0x38},
+	{0x3393, 0x30},
+	{0x3394, 0x30},
+	{0x3395, 0x30},
+	{0x3399, 0xff},
+	{0x33a2, 0x08},
+	{0x33a3, 0x0c},
+	{0x33e0, 0xa0},
+	{0x33e1, 0x08},
+	{0x33e2, 0x00},
+	{0x33e3, 0x10},
+	{0x33e4, 0x10},
+	{0x33e5, 0x00},
+	{0x33e6, 0x10},
+	{0x33e7, 0x10},
+	{0x33e8, 0x00},
+	{0x33e9, 0x10},
+	{0x33ea, 0x16},
+	{0x33eb, 0x00},
+	{0x33ec, 0x10},
+	{0x33ed, 0x18},
+	{0x33ee, 0xa0},
+	{0x33ef, 0x08},
+	{0x33f4, 0x00},
+	{0x33f5, 0x10},
+	{0x33f6, 0x10},
+	{0x33f7, 0x00},
+	{0x33f8, 0x10},
+	{0x33f9, 0x10},
+	{0x33fa, 0x00},
+	{0x33fb, 0x10},
+	{0x33fc, 0x16},
+	{0x33fd, 0x00},
+	{0x33fe, 0x10},
+	{0x33ff, 0x18},
+	{0x360f, 0x05},
+	{0x3622, 0xee},
+	{0x3625, 0x0a},
+	{0x3630, 0xa8},
+	{0x3631, 0x80},
+	{0x3633, 0x44},
+	{0x3634, 0x34},
+	{0x3635, 0x60},
+	{0x3636, 0x20},
+	{0x3637, 0x11},
+	{0x3638, 0x2a},
+	{0x363a, 0x1f},
+	{0x363b, 0x03},
+	{0x366e, 0x04},
+	{0x3670, 0x4a},
+	{0x3671, 0xee},
+	{0x3672, 0x0e},
+	{0x3673, 0x0e},
+	{0x3674, 0x70},
+	{0x3675, 0x40},
+	{0x3676, 0x45},
+	{0x367a, 0x08},
+	{0x367b, 0x38},
+	{0x367c, 0x08},
+	{0x367d, 0x38},
+	{0x3690, 0x43},
+	{0x3691, 0x63},
+	{0x3692, 0x63},
+	{0x3699, 0x80},
+	{0x369a, 0x9f},
+	{0x369b, 0x9f},
+	{0x369c, 0x08},
+	{0x369d, 0x38},
+	{0x36a2, 0x08},
+	{0x36a3, 0x38},
+	{0x36ea, 0x31},
+	{0x36eb, 0x14},
+	{0x36ec, 0x0c},
+	{0x36ed, 0x24},
+	{0x36fa, 0x31},
+	{0x36fb, 0x09},
+	{0x36fc, 0x00},
+	{0x36fd, 0x24},
+	{0x3902, 0xc5},
+	{0x3905, 0xd8},
+	{0x3908, 0x11},
+	{0x391b, 0x80},
+	{0x391c, 0x0f},
+	{0x391d, 0x24},
+	{0x3933, 0x28},
+	{0x3934, 0x20},
+	{0x3940, 0x6c},
+	{0x3942, 0x08},
+	{0x3943, 0x28},
+	{0x3980, 0x00},
+	{0x3981, 0x00},
+	{0x3982, 0x00},
+	{0x3983, 0x00},
+	{0x3984, 0x00},
+	{0x3985, 0x00},
+	{0x3986, 0x00},
+	{0x3987, 0x00},
+	{0x3988, 0x00},
+	{0x3989, 0x00},
+	{0x398a, 0x00},
+	{0x398b, 0x04},
+	{0x398c, 0x00},
+	{0x398d, 0x04},
+	{0x398e, 0x00},
+	{0x398f, 0x08},
+	{0x3990, 0x00},
+	{0x3991, 0x10},
+	{0x3992, 0x03},
+	{0x3993, 0xd8},
+	{0x3994, 0x03},
+	{0x3995, 0xe0},
+	{0x3996, 0x03},
+	{0x3997, 0xf0},
+	{0x3998, 0x03},
+	{0x3999, 0xf8},
+	{0x399a, 0x00},
+	{0x399b, 0x00},
+	{0x399c, 0x00},
+	{0x399d, 0x08},
+	{0x399e, 0x00},
+	{0x399f, 0x10},
+	{0x39a0, 0x00},
+	{0x39a1, 0x18},
+	{0x39a2, 0x00},
+	{0x39a3, 0x28},
+	{0x39af, 0x58},
+	{0x39b5, 0x30},
+	{0x39b6, 0x00},
+	{0x39b7, 0x34},
+	{0x39b8, 0x00},
+	{0x39b9, 0x00},
+	{0x39ba, 0x34},
+	{0x39bb, 0x00},
+	{0x39bc, 0x00},
+	{0x39bd, 0x00},
+	{0x39be, 0x00},
+	{0x39bf, 0x00},
+	{0x39c0, 0x00},
+	{0x39c1, 0x00},
+	{0x39c5, 0x21},
+	{0x39c8, 0x00},
+	{0x39db, 0x20},
+	{0x39dc, 0x00},
+	{0x39de, 0x20},
+	{0x39df, 0x00},
+	{0x39e0, 0x00},
+	{0x39e1, 0x00},
+	{0x39e2, 0x00},
+	{0x39e3, 0x00},
+	{0x3e00, 0x00},
+	{0x3e01, 0xc2},
+	{0x3e02, 0xa0},
+	{0x3e03, 0x0b},
+	{0x3e06, 0x00},
+	{0x3e07, 0x80},
+	{0x3e08, 0x03},
+	{0x3e09, 0x40},
+	{0x3e14, 0xb1},
+	{0x3e25, 0x03},
+	{0x3e26, 0x40},
+	{0x4501, 0xb4},
+	{0x4509, 0x20},
+	{0x4800, 0x64},
+	{0x4818, 0x00},
+	{0x4819, 0x30},
+	{0x481a, 0x00},
+	{0x481b, 0x0b},
+	{0x481c, 0x00},
+	{0x481d, 0xc8},
+	{0x4821, 0x02},
+	{0x4822, 0x00},
+	{0x4823, 0x03},
+	{0x4828, 0x00},
+	{0x4829, 0x02},
+	{0x4837, 0x3b},
+	{0x5784, 0x10},
+	{0x5785, 0x08},
+	{0x5787, 0x06},
+	{0x5788, 0x06},
+	{0x5789, 0x00},
+	{0x578a, 0x06},
+	{0x578b, 0x06},
+	{0x578c, 0x00},
+	{0x5790, 0x10},
+	{0x5791, 0x10},
+	{0x5792, 0x00},
+	{0x5793, 0x10},
+	{0x5794, 0x10},
+	{0x5795, 0x00},
+	{0x57c4, 0x10},
+	{0x57c5, 0x08},
+	{0x57c7, 0x06},
+	{0x57c8, 0x06},
+	{0x57c9, 0x00},
+	{0x57ca, 0x06},
+	{0x57cb, 0x06},
+	{0x57cc, 0x00},
+	{0x57d0, 0x10},
+	{0x57d1, 0x10},
+	{0x57d2, 0x00},
+	{0x57d3, 0x10},
+	{0x57d4, 0x10},
+	{0x57d5, 0x00},
+	{0x5988, 0x86},
+	{0x598e, 0x05},
+	{0x598f, 0x6c},
+	{0x36e9, 0x51},
+	{0x36f9, 0x51},
 	{REG_NULL, 0x00},
 };
 
@@ -422,12 +705,12 @@ static const struct regval sc4238_hdr10bit_2688x1520_regs[] = {
 	{0x39e2, 0x00},
 	{0x39e3, 0x00},
 	{0x39e8, 0x03},
-	{0x3e00, 0x01},
+	{0x3e00, 0x00},
 	{0x3e01, 0x6a},
 	{0x3e02, 0x00},
 	{0x3e03, 0x0b},
-	{0x3e04, 0x16},
-	{0x3e05, 0xa0},
+	{0x3e04, 0x08},
+	{0x3e05, 0x00},
 	{0x3e06, 0x00},
 	{0x3e07, 0x80},
 	{0x3e08, 0x03},
@@ -1072,20 +1355,37 @@ static const struct sc4238_mode supported_modes[] = {
 		.height = 1520,
 		.max_fps = {
 			.numerator = 10000,
-			.denominator = 300000,
-			/*.denominator = 151417,*/
+			.denominator = 250000,
+		},
+		.exp_def = 0x0600,
+		.hts_def = 0x05A0 * 2,
+		.vts_def = 0x0752,
+		.reg_list = sc4238_linear10bit_2688x1520_regs,
+		.hdr_mode = NO_HDR,
+		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
+		.link_freq = 0, /* an index in link_freq[] */
+		.pixel_rate = PIXEL_RATE_WITH_200M,
+	},
+	{
+		.bus_fmt = MEDIA_BUS_FMT_SBGGR10_1X10,
+		.width = 2688,
+		.height = 1520,
+		.max_fps = {
+			.numerator = 10000,
+			.denominator = 250000,
+			/*.denominator = 300000,*/
 		},
 		.exp_def = 0x0c00,
 		.hts_def = 0x060e * 2,
-		.vts_def = 0x0c18,
-		/*.vts_def = 0x0cb0,*/
+		.vts_def = 0x0e83,
+		/*.vts_def = 0x0c18,*/
 		.reg_list = sc4238_hdr10bit_2688x1520_regs,
 		.hdr_mode = HDR_X2,
 		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_1,
 		.vc[PAD1] = V4L2_MBUS_CSI2_CHANNEL_0,//L->csi wr0
 		.vc[PAD2] = V4L2_MBUS_CSI2_CHANNEL_1,
 		.vc[PAD3] = V4L2_MBUS_CSI2_CHANNEL_1,//M->csi wr2
-		.link_freq = 0, /* an index in link_freq[] */
+		.link_freq = 1, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_360M,
 	},
 	{
@@ -1102,7 +1402,7 @@ static const struct sc4238_mode supported_modes[] = {
 		.reg_list = sc4238_linear12bit_2688x1520_regs,
 		.hdr_mode = NO_HDR,
 		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
-		.link_freq = 1, /* an index in link_freq[] */
+		.link_freq = 0, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_200M,
 	},
 	{
@@ -1119,14 +1419,14 @@ static const struct sc4238_mode supported_modes[] = {
 		.reg_list = sc4238_linear12bit_2560x1440_regs,
 		.hdr_mode = NO_HDR,
 		.vc[PAD0] = V4L2_MBUS_CSI2_CHANNEL_0,
-		.link_freq = 1, /* an index in link_freq[] */
+		.link_freq = 0, /* an index in link_freq[] */
 		.pixel_rate = PIXEL_RATE_WITH_200M,
 	},
 };
 
 static const s64 link_freq_menu_items[] = {
-	MIPI_FREQ_360M,
 	MIPI_FREQ_200M,
+	MIPI_FREQ_360M,
 };
 
 static const char * const sc4238_test_pattern_menu[] = {
@@ -1414,90 +1714,61 @@ static void sc4238_get_module_inf(struct sc4238 *sc4238,
 	strlcpy(inf->base.lens, sc4238->len_name, sizeof(inf->base.lens));
 }
 
-static int sc4238_set_long_gain(struct sc4238 *sc4238, u32 a_gain)
+static int sc4238_get_gain_reg(struct sc4238 *sc4238, u32 total_gain,
+			       u32 *again_coarse_reg, u32 *again_fine_reg,
+			       u32 *dgain_coarse_reg, u32 *dgain_fine_reg)
 {
-	int ret = 0;
-	u32 coarse_again, fine_again, fine_again_reg, coarse_again_reg;
+	u32 again, dgain;
 
-		if (a_gain < 0x80) { /*1x ~ 2x*/
-			fine_again = a_gain - 64;
-			coarse_again = 0x03;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else if (a_gain < 0x100) { /*2x ~ 4x*/
-			fine_again = (a_gain >> 1) - 64;
-			coarse_again = 0x7;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else if (a_gain < 0x200) { /*4x ~ 8x*/
-			fine_again = (a_gain >> 2) - 64;
-			coarse_again = 0xf;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else { /*8x ~ 16x*/
-			fine_again = (a_gain >> 3) - 64;
-			coarse_again = 0x1f;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		}
+	if (total_gain > 32004) {
+		dev_err(&sc4238->client->dev,
+			"total_gain max is 15.875*31.5*64, current total_gain is %d\n",
+			total_gain);
+		return -EINVAL;
+	}
 
-		ret |= sc4238_write_reg(sc4238->client,
-			SC4238_REG_COARSE_AGAIN_L,
-			SC4238_REG_VALUE_08BIT,
-			coarse_again_reg);
-		ret |= sc4238_write_reg(sc4238->client,
-			SC4238_REG_FINE_AGAIN_L,
-			SC4238_REG_VALUE_08BIT,
-			fine_again_reg);
+	if (total_gain > 1016) {/*15.875*/
+		again = 1016;
+		dgain = total_gain * 128 / 1016;
+	} else {
+		again = total_gain;
+		dgain = 128;
+	}
 
-	return ret;
-}
+	if (again < 0x80) { /*1x ~ 2x*/
+		*again_fine_reg = again & 0x7f;
+		*again_coarse_reg = 0x03;
+	} else if (again < 0x100) { /*2x ~ 4x*/
+		*again_fine_reg = (again >> 1) & 0x7f;
+		*again_coarse_reg = 0x07;
+	} else if (again < 0x200) { /*4x ~ 8x*/
+		*again_fine_reg = (again >> 2) & 0x7f;
+		*again_coarse_reg = 0x0f;
+	} else { /*8x ~ 16x*/
+		*again_fine_reg = (again >> 3) & 0x7f;
+		*again_coarse_reg = 0x1f;
+	}
 
-static int sc4238_set_short_gain(struct sc4238 *sc4238, u32 a_gain)
-{
-	int ret = 0;
-	u32 coarse_again, fine_again, fine_again_reg, coarse_again_reg;
-
-		if (a_gain < 0x80) { /*1x ~ 2x*/
-			fine_again = a_gain - 64;
-			coarse_again = 0x03;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else if (a_gain < 0x100) { /*2x ~ 4x*/
-			fine_again = (a_gain >> 1) - 64;
-			coarse_again = 0x7;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else if (a_gain < 0x200) { /*4x ~ 8x*/
-			fine_again = (a_gain >> 2) - 64;
-			coarse_again = 0xf;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		} else { /*8x ~ 16x*/
-			fine_again = (a_gain >> 3) - 64;
-			coarse_again = 0x1f;
-			fine_again_reg = ((0x01 << 6) & 0x40) |
-				(fine_again & 0x3f);
-			coarse_again_reg = coarse_again  & 0x1F;
-		}
-
-		ret |= sc4238_write_reg(sc4238->client,
-			SC4238_REG_COARSE_AGAIN_S,
-			SC4238_REG_VALUE_08BIT,
-			coarse_again_reg);
-		ret |= sc4238_write_reg(sc4238->client,
-			SC4238_REG_FINE_AGAIN_S,
-			SC4238_REG_VALUE_08BIT,
-			fine_again_reg);
-
-	return ret;
+	if (dgain < 0x100) { /*1x ~ 2x*/
+		*dgain_fine_reg = dgain & 0xff;
+		*dgain_coarse_reg = 0x00;
+	} else if (dgain < 0x200) { /*2x ~ 4x*/
+		*dgain_fine_reg = (dgain >> 1) & 0xff;
+		*dgain_coarse_reg = 0x01;
+	} else if (dgain < 0x400) { /*4x ~ 8x*/
+		*dgain_fine_reg = (dgain >> 2) & 0xff;
+		*dgain_coarse_reg = 0x03;
+	} else if (dgain < 0x800) { /*8x ~ 16x*/
+		*dgain_fine_reg = (dgain >> 3) & 0xff;
+		*dgain_coarse_reg = 0x07;
+	} else { /*16x ~ 31.5x*/
+		*dgain_fine_reg = (dgain >> 4) & 0xff;
+		*dgain_coarse_reg = 0x0f;
+	}
+	dev_dbg(&sc4238->client->dev,
+		"total_gain 0x%x again_coarse 0x%x, again_fine 0x%x, dgain_coarse 0x%x, dgain_fine 0x%x\n",
+		total_gain, *again_coarse_reg, *again_fine_reg, *dgain_coarse_reg, *dgain_fine_reg);
+	return 0;
 }
 
 static int sc4238_set_hdrae(struct sc4238 *sc4238,
@@ -1505,7 +1776,11 @@ static int sc4238_set_hdrae(struct sc4238 *sc4238,
 {
 	u32 l_exp_time, m_exp_time, s_exp_time;
 	u32 l_a_gain, m_a_gain, s_a_gain;
+	u32 again_coarse_reg, again_fine_reg;
+	u32 dgain_coarse_reg, dgain_fine_reg;
+	u32 max_exp_l, max_exp_s;
 	int ret = 0;
+	u32 rhs1 = 0;
 
 	if (!sc4238->has_init_exp && !sc4238->streaming) {
 		sc4238->init_hdrae_exp = *ae;
@@ -1534,24 +1809,77 @@ static int sc4238_set_hdrae(struct sc4238 *sc4238,
 		m_exp_time = s_exp_time;
 	}
 
+	if (l_a_gain != m_a_gain) {
+		dev_err(&sc4238->client->dev,
+			"gain of long frame must same with short frame, 0x%x != 0x%x\n",
+			l_a_gain, m_a_gain);
+	}
+	/* long frame exp max = 2*({320e,320f} -{3e23,3e24} -9) ,unit 1/2 line */
+	/* short frame exp max = 2*({3e23,3e24} - 8) ,unit 1/2 line */
+	//max short exposure limit to 3 ms
+	rhs1 = 286;
+	max_exp_l = sc4238->cur_vts - rhs1 - 9;
+	max_exp_s = rhs1 - 8;
+	if (l_exp_time > max_exp_l || m_exp_time > max_exp_s || l_exp_time <= m_exp_time) {
+		dev_err(&sc4238->client->dev,
+			"max_exp_long %d, max_exp_short %d, cur_exp_long %d, cur_exp_short %d\n",
+			max_exp_l, max_exp_s, l_exp_time, m_exp_time);
+	}
+
+	ret = sc4238_get_gain_reg(sc4238, l_a_gain,
+				  &again_coarse_reg, &again_fine_reg,
+				  &dgain_coarse_reg, &dgain_fine_reg);
+	if (ret != 0)
+		return -EINVAL;
+
+	dev_dbg(&sc4238->client->dev,
+		"max exposure reg limit 0x%x-8 line\n", rhs1);
 	ret |= sc4238_write_reg(sc4238->client,
-		SC4238_GROUP_UPDATE_ADDRESS,
-		SC4238_REG_VALUE_08BIT,
-		SC4238_GROUP_UPDATE_START_DATA);
+				SC4238_REG_EXP_MAX_MID_H,
+				SC4238_REG_VALUE_16BIT,
+				rhs1);
+
 	ret |= sc4238_write_reg(sc4238->client,
-		SC4238_REG_EXP_LONG_H,
-		SC4238_REG_VALUE_24BIT,
-		l_exp_time << 4);
-	ret |= sc4238_set_long_gain(sc4238, l_a_gain);
+				SC4238_REG_EXP_LONG_H,
+				SC4238_REG_VALUE_24BIT,
+				l_exp_time << 5);
 	ret |= sc4238_write_reg(sc4238->client,
-		SC4238_REG_EXP_MID_H,
-		SC4238_REG_VALUE_16BIT,
-		m_exp_time << 4);
-	ret |= sc4238_set_short_gain(sc4238, m_a_gain);
+				SC4238_REG_EXP_MID_H,
+				SC4238_REG_VALUE_16BIT,
+				m_exp_time << 5);
+
 	ret |= sc4238_write_reg(sc4238->client,
-		SC4238_GROUP_UPDATE_ADDRESS,
-		SC4238_REG_VALUE_08BIT,
-		SC4238_GROUP_UPDATE_END_DATA);
+				SC4238_REG_COARSE_AGAIN_L,
+				SC4238_REG_VALUE_08BIT,
+				again_coarse_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_FINE_AGAIN_L,
+				SC4238_REG_VALUE_08BIT,
+				again_fine_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_COARSE_AGAIN_S,
+				SC4238_REG_VALUE_08BIT,
+				again_coarse_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_FINE_AGAIN_S,
+				SC4238_REG_VALUE_08BIT,
+				again_fine_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_COARSE_DGAIN_L,
+				SC4238_REG_VALUE_08BIT,
+				dgain_coarse_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_FINE_DGAIN_L,
+				SC4238_REG_VALUE_08BIT,
+				dgain_fine_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_COARSE_DGAIN_S,
+				SC4238_REG_VALUE_08BIT,
+				dgain_coarse_reg);
+	ret |= sc4238_write_reg(sc4238->client,
+				SC4238_REG_FINE_DGAIN_S,
+				SC4238_REG_VALUE_08BIT,
+				dgain_fine_reg);
 
 	return ret;
 }
@@ -2042,6 +2370,10 @@ static int sc4238_set_ctrl(struct v4l2_ctrl *ctrl)
 	s64 max;
 	int ret = 0;
 	u32 val = 0;
+	u32 again_coarse_reg = 0;
+	u32 again_fine_reg = 0;
+	u32 dgain_coarse_reg = 0;
+	u32 dgain_fine_reg = 0;
 
 	dev_dbg(&client->dev, "ctrl->id(0x%x) val 0x%x\n",
 		ctrl->id, ctrl->val);
@@ -2072,7 +2404,25 @@ static int sc4238_set_ctrl(struct v4l2_ctrl *ctrl)
 			ctrl->val);
 		break;
 	case V4L2_CID_ANALOGUE_GAIN:
-		ret = sc4238_set_long_gain(sc4238, ctrl->val);
+		ret = sc4238_get_gain_reg(sc4238, ctrl->val,
+					  &again_coarse_reg, &again_fine_reg,
+					  &dgain_coarse_reg, &dgain_fine_reg);
+		ret |= sc4238_write_reg(sc4238->client,
+					SC4238_REG_COARSE_AGAIN_L,
+					SC4238_REG_VALUE_08BIT,
+					again_coarse_reg);
+		ret |= sc4238_write_reg(sc4238->client,
+					SC4238_REG_FINE_AGAIN_L,
+					SC4238_REG_VALUE_08BIT,
+					again_fine_reg);
+		ret |= sc4238_write_reg(sc4238->client,
+					SC4238_REG_COARSE_DGAIN_L,
+					SC4238_REG_VALUE_08BIT,
+					dgain_coarse_reg);
+		ret |= sc4238_write_reg(sc4238->client,
+					SC4238_REG_FINE_DGAIN_L,
+					SC4238_REG_VALUE_08BIT,
+					dgain_fine_reg);
 		dev_dbg(&client->dev, "set analog gain 0x%x\n",
 			ctrl->val);
 		break;
@@ -2080,6 +2430,8 @@ static int sc4238_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = sc4238_write_reg(sc4238->client, SC4238_REG_VTS_H,
 					SC4238_REG_VALUE_16BIT,
 					ctrl->val + sc4238->cur_mode->height);
+		if (ret == 0)
+			sc4238->cur_vts = ctrl->val + sc4238->cur_mode->height;
 		dev_dbg(&client->dev, "set vblank 0x%x\n",
 			ctrl->val);
 		break;

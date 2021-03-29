@@ -326,6 +326,18 @@ static const struct cif_reg rv1126_cif_regs[] = {
 	[CIF_REG_DVP_CUR_DST] = CIF_REG(RV1126_CIF_CUR_DST),
 	[CIF_REG_DVP_LAST_LINE] = CIF_REG(RV1126_CIF_LAST_LINE),
 	[CIF_REG_DVP_LAST_PIX] = CIF_REG(RV1126_CIF_LAST_PIX),
+	[CIF_REG_DVP_FRM0_ADDR_Y_ID1] = CIF_REG(CIF_FRM0_ADDR_Y_ID1),
+	[CIF_REG_DVP_FRM0_ADDR_UV_ID1] = CIF_REG(CIF_FRM0_ADDR_UV_ID1),
+	[CIF_REG_DVP_FRM1_ADDR_Y_ID1] = CIF_REG(CIF_FRM1_ADDR_Y_ID1),
+	[CIF_REG_DVP_FRM1_ADDR_UV_ID1] = CIF_REG(CIF_FRM1_ADDR_UV_ID1),
+	[CIF_REG_DVP_FRM0_ADDR_Y_ID2] = CIF_REG(CIF_FRM0_ADDR_Y_ID2),
+	[CIF_REG_DVP_FRM0_ADDR_UV_ID2] = CIF_REG(CIF_FRM0_ADDR_UV_ID2),
+	[CIF_REG_DVP_FRM1_ADDR_Y_ID2] = CIF_REG(CIF_FRM1_ADDR_Y_ID2),
+	[CIF_REG_DVP_FRM1_ADDR_UV_ID2] = CIF_REG(CIF_FRM1_ADDR_UV_ID2),
+	[CIF_REG_DVP_FRM0_ADDR_Y_ID3] = CIF_REG(CIF_FRM0_ADDR_Y_ID3),
+	[CIF_REG_DVP_FRM0_ADDR_UV_ID3] = CIF_REG(CIF_FRM0_ADDR_UV_ID3),
+	[CIF_REG_DVP_FRM1_ADDR_Y_ID3] = CIF_REG(CIF_FRM1_ADDR_Y_ID3),
+	[CIF_REG_DVP_FRM1_ADDR_UV_ID3] = CIF_REG(CIF_FRM1_ADDR_UV_ID3),
 	[CIF_REG_MIPI_LVDS_ID0_CTRL0] = CIF_REG(CIF_CSI_ID0_CTRL0),
 	[CIF_REG_MIPI_LVDS_ID0_CTRL1] = CIF_REG(CIF_CSI_ID0_CTRL1),
 	[CIF_REG_MIPI_LVDS_ID1_CTRL0] = CIF_REG(CIF_CSI_ID1_CTRL0),
@@ -798,7 +810,7 @@ void rkcif_hw_soft_reset(struct rkcif_hw *cif_hw, bool is_rst_iommu)
 			reset_control_deassert(cif_hw->cif_rst[i]);
 }
 
-static int rkcif_plat_probe(struct platform_device *pdev)
+static int rkcif_plat_hw_probe(struct platform_device *pdev)
 {
 	const struct of_device_id *match;
 	struct device_node *node = pdev->dev.of_node;
@@ -924,16 +936,14 @@ static int rkcif_plat_probe(struct platform_device *pdev)
 			return ret;
 	}
 
-	pm_runtime_enable(&pdev->dev);
-
 	rkcif_hw_soft_reset(cif_hw, true);
+
+	pm_runtime_enable(&pdev->dev);
 
 	if (data->chip_id == CHIP_RK1808_CIF ||
 	    data->chip_id == CHIP_RV1126_CIF ||
-	    data->chip_id == CHIP_RK3568_CIF) {
+	    data->chip_id == CHIP_RK3568_CIF)
 		platform_driver_register(&rkcif_plat_drv);
-		platform_driver_register(&rkcif_subdev_driver);
-	}
 
 	return 0;
 }
@@ -989,7 +999,7 @@ static struct platform_driver rkcif_hw_plat_drv = {
 		.of_match_table = of_match_ptr(rkcif_plat_of_match),
 		.pm = &rkcif_plat_pm_ops,
 	},
-	.probe = rkcif_plat_probe,
+	.probe = rkcif_plat_hw_probe,
 	.remove = rkcif_plat_remove,
 };
 

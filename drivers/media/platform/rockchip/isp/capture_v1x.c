@@ -9,6 +9,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-subdev.h>
 #include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 #include "dev.h"
 #include "regs.h"
 
@@ -328,7 +329,7 @@ static void sp_disable_mi(struct rkisp_stream *stream)
 /* Update buffer info to memory interface, it's called in interrupt */
 static void update_mi(struct rkisp_stream *stream)
 {
-	struct rkisp_dummy_buffer *dummy_buf = &stream->dummy_buf;
+	struct rkisp_dummy_buffer *dummy_buf = &stream->ispdev->hw_dev->dummy_buf;
 	void __iomem *base = stream->ispdev->base_addr;
 
 	/* The dummy space allocated by dma_alloc_coherent is used, we can
@@ -341,7 +342,7 @@ static void update_mi(struct rkisp_stream *stream)
 			stream->next_buf->buff_addr[RKISP_PLANE_CB]);
 		mi_set_cr_addr(stream,
 			stream->next_buf->buff_addr[RKISP_PLANE_CR]);
-	} else {
+	} else if (dummy_buf->mem_priv) {
 		mi_set_y_addr(stream, dummy_buf->dma_addr);
 		mi_set_cb_addr(stream, dummy_buf->dma_addr);
 		mi_set_cr_addr(stream, dummy_buf->dma_addr);
@@ -600,12 +601,19 @@ static void rkisp_buf_queue(struct vb2_buffer *vb)
 	unsigned long lock_flags = 0;
 	struct v4l2_pix_format_mplane *pixm = &stream->out_fmt;
 	struct capture_fmt *isp_fmt = &stream->out_isp_fmt;
+	struct sg_table *sgt;
 	int i;
 
 	memset(ispbuf->buff_addr, 0, sizeof(ispbuf->buff_addr));
-	for (i = 0; i < isp_fmt->mplanes; i++)
-		ispbuf->buff_addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
-
+	for (i = 0; i < isp_fmt->mplanes; i++) {
+		vb2_plane_vaddr(vb, i);
+		if (stream->ispdev->hw_dev->is_mmu) {
+			sgt = vb2_dma_sg_plane_desc(vb, i);
+			ispbuf->buff_addr[i] = sg_dma_address(sgt->sgl);
+		} else {
+			ispbuf->buff_addr[i] = vb2_dma_contig_plane_dma_addr(vb, i);
+		}
+	}
 	/*
 	 * NOTE: plane_fmt[0].sizeimage is total size of all planes for single
 	 * memory plane formats, so calculate the size explicitly.
@@ -642,38 +650,14 @@ static void rkisp_buf_queue(struct vb2_buffer *vb)
 
 static int rkisp_create_dummy_buf(struct rkisp_stream *stream)
 {
-	struct rkisp_dummy_buffer *dummy_buf = &stream->dummy_buf;
-	struct rkisp_device *dev = stream->ispdev;
-	u32 size = max3(stream->out_fmt.plane_fmt[0].bytesperline *
-			stream->out_fmt.height,
-			stream->out_fmt.plane_fmt[1].sizeimage,
-			stream->out_fmt.plane_fmt[2].sizeimage);
-
-	if (dummy_buf->mem_priv) {
-		if (dummy_buf->size >= size)
-			return 0;
-		rkisp_free_buffer(dev, dummy_buf);
-	}
-
-	dummy_buf->size = size;
-	if (rkisp_alloc_buffer(dev, dummy_buf) < 0) {
-		v4l2_err(&dev->v4l2_dev,
-			 "Failed to allocate the memory for dummy buffer\n");
-		return -ENOMEM;
-	}
-
-	v4l2_dbg(1, rkisp_debug, &dev->v4l2_dev,
-		 "stream:%d dummy buf:0x%x\n",
-		 stream->id, (u32)dummy_buf->dma_addr);
-	return 0;
+	return rkisp_alloc_common_dummy_buf(stream->ispdev);
 }
 
 static void rkisp_destroy_dummy_buf(struct rkisp_stream *stream)
 {
-	struct rkisp_dummy_buffer *dummy_buf = &stream->dummy_buf;
 	struct rkisp_device *dev = stream->ispdev;
 
-	rkisp_free_buffer(dev, dummy_buf);
+	rkisp_free_common_dummy_buf(dev);
 }
 
 static void destroy_buf_queue(struct rkisp_stream *stream,
@@ -870,14 +854,15 @@ static int rkisp_init_vb2_queue(struct vb2_queue *q,
 	q->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
 	q->drv_priv = stream;
 	q->ops = &rkisp_vb2_ops;
-	q->mem_ops = &vb2_dma_contig_memops;
+	q->mem_ops = stream->ispdev->hw_dev->mem_ops;
 	q->buf_struct_size = sizeof(struct rkisp_buffer);
 	q->min_buffers_needed = CIF_ISP_REQ_BUFS_MIN;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
 	q->lock = &stream->ispdev->apilock;
 	q->dev = stream->ispdev->hw_dev->dev;
 	q->allow_cache_hints = 1;
-
+	if (stream->ispdev->hw_dev->is_dma_contig)
+		q->dma_attrs = DMA_ATTR_FORCE_CONTIGUOUS;
 	return vb2_queue_init(q);
 }
 

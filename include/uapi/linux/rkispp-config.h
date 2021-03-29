@@ -1,4 +1,4 @@
-/* SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/* SPDX-License-Identifier: ((GPL-2.0+ WITH Linux-syscall-note) OR MIT)
  *
  * Copyright (C) 2019 Rockchip Electronics Co., Ltd.
  */
@@ -9,13 +9,20 @@
 #include <linux/types.h>
 #include <linux/v4l2-controls.h>
 
-#define ISPP_API_VERSION		KERNEL_VERSION(1, 2, 1)
+#define ISPP_API_VERSION		KERNEL_VERSION(1, 5, 1)
 
-#define ISPP_MODULE_TNR			BIT(0)//2TO1
-#define ISPP_MODULE_NR			BIT(1)
-#define ISPP_MODULE_SHP			BIT(2)
-#define ISPP_MODULE_FEC			BIT(3)//CALIBRATION
-#define ISPP_MODULE_ORB			BIT(4)
+#define ISPP_ID_TNR			(0)
+#define ISPP_ID_NR			(1)
+#define ISPP_ID_SHP			(2)
+#define ISPP_ID_FEC			(3)
+#define ISPP_ID_ORB			(4)
+#define ISPP_ID_MAX			(5)
+
+#define ISPP_MODULE_TNR			BIT(ISPP_ID_TNR)//2TO1
+#define ISPP_MODULE_NR			BIT(ISPP_ID_NR)
+#define ISPP_MODULE_SHP			BIT(ISPP_ID_SHP)
+#define ISPP_MODULE_FEC			BIT(ISPP_ID_FEC)//CALIBRATION
+#define ISPP_MODULE_ORB			BIT(ISPP_ID_ORB)
 //extra function
 #define ISPP_MODULE_TNR_3TO1		(BIT(16) | ISPP_MODULE_TNR)
 #define ISPP_MODULE_FEC_ST		(BIT(17) | ISPP_MODULE_FEC)//STABILIZATION
@@ -74,11 +81,63 @@
 #define FEC_MESH_XY_NUM			131072
 #define FEC_MESH_BUF_NUM		2
 
+#define TNR_BUF_IDXFD_NUM		64
+
+/************VIDIOC_PRIVATE*************/
 #define RKISPP_CMD_GET_FECBUF_INFO	\
 	_IOR('V', BASE_VIDIOC_PRIVATE + 0, struct rkispp_fecbuf_info)
 
 #define RKISPP_CMD_SET_FECBUF_SIZE	\
 	_IOW('V', BASE_VIDIOC_PRIVATE + 1, struct rkispp_fecbuf_size)
+
+#define RKISPP_CMD_FEC_IN_OUT \
+	_IOW('V', BASE_VIDIOC_PRIVATE + 10, struct rkispp_fec_in_out)
+
+#define RKISPP_CMD_TRIGGER_YNRRUN       \
+	_IOW('V', BASE_VIDIOC_PRIVATE + 11, struct rkispp_tnr_inf)
+
+#define RKISPP_CMD_GET_TNRBUF_FD \
+	_IOR('V', BASE_VIDIOC_PRIVATE + 12, struct rkispp_buf_idxfd)
+
+#define RKISPP_CMD_TRIGGER_MODE		\
+	_IOW('V', BASE_VIDIOC_PRIVATE + 13, struct rkispp_trigger_mode)
+
+/************EVENT_PRIVATE**************/
+#define RKISPP_V4L2_EVENT_TNR_COMPLETE  \
+	(V4L2_EVENT_PRIVATE_START + 3)
+
+struct rkispp_fec_in_out {
+	int width;
+	int height;
+	int in_fourcc;
+	int out_fourcc;
+	int in_pic_fd;
+	int out_pic_fd;
+	int mesh_xint_fd;
+	int mesh_xfra_fd;
+	int mesh_yint_fd;
+	int mesh_yfra_fd;
+};
+
+struct rkispp_tnr_inf {
+	u32 dev_id;
+	u32 frame_id;
+	u32 gainkg_idx;
+	u32 gainwr_idx;
+	u32 gainkg_size;
+	u32 gainwr_size;
+} __attribute__ ((packed));
+
+struct rkispp_buf_idxfd {
+	u32 buf_num;
+	u32 index[TNR_BUF_IDXFD_NUM];
+	s32 dmafd[TNR_BUF_IDXFD_NUM];
+} __attribute__ ((packed));
+
+struct rkispp_trigger_mode {
+	u32 module;
+	u32 on;
+} __attribute__ ((packed));
 
 struct rkispp_tnr_config {
 	u8 opty_en;
@@ -276,6 +335,7 @@ struct rkispp_params_cfg {
 	u32 module_cfg_update;
 	u32 module_init_ens;
 
+	u32 frame_id;
 	struct rkispp_tnr_config tnr_cfg;
 	struct rkispp_nr_config nr_cfg;
 	struct rkispp_sharp_config shp_cfg;

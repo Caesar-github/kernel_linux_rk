@@ -120,6 +120,7 @@ struct rockchip_crtc_state {
 	int right_margin;
 	int top_margin;
 	int bottom_margin;
+	int vdisplay;
 	int afbdc_win_format;
 	int afbdc_win_width;
 	int afbdc_win_height;
@@ -250,5 +251,6 @@ extern struct platform_driver rockchip_lvds_driver;
 extern struct platform_driver rockchip_tve_driver;
 extern struct platform_driver vop_platform_driver;
 extern struct platform_driver vop2_platform_driver;
+extern struct platform_driver vvop_platform_driver;
 extern struct platform_driver rockchip_rgb_driver;
 #endif /* _ROCKCHIP_DRM_DRV_H_ */

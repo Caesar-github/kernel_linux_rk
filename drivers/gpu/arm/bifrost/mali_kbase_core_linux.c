@@ -4455,7 +4455,7 @@ int kbase_device_debugfs_init(struct kbase_device *kbdev)
 
 #ifdef CONFIG_MALI_BIFROST_DEVFREQ
 #ifdef CONFIG_DEVFREQ_THERMAL
-	if (kbdev->devfreq)
+	if (kbdev->devfreq && !kbdev->model_data)
 		kbase_ipa_debugfs_init(kbdev);
 #endif /* CONFIG_DEVFREQ_THERMAL */
 #endif /* CONFIG_MALI_BIFROST_DEVFREQ */
@@ -4909,8 +4909,6 @@ static const struct dev_pm_ops kbase_pm_ops = {
 
 #ifdef CONFIG_OF
 static const struct of_device_id kbase_dt_ids[] = {
-	{ .compatible = "arm,malit6xx" },
-	{ .compatible = "arm,mali-midgard" },
 	{ .compatible = "arm,mali-bifrost" },
 	{ /* sentinel */ }
 };

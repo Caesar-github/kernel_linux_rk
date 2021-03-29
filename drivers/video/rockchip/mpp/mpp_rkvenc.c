@@ -659,6 +659,7 @@ static int rkvenc_control(struct mpp_session *session, struct mpp_request *req)
 		priv = session->priv;
 
 		cnt = req->size / sizeof(elem);
+		cnt = (cnt > ENC_INFO_BUTT) ? ENC_INFO_BUTT : cnt;
 		mpp_debug(DEBUG_IOCTL, "codec info count %d\n", cnt);
 		for (i = 0; i < cnt; i++) {
 			if (copy_from_user(&elem, req->data + i * sizeof(elem), sizeof(elem))) {
@@ -666,7 +667,7 @@ static int rkvenc_control(struct mpp_session *session, struct mpp_request *req)
 				continue;
 			}
 			if (elem.type > ENC_INFO_BASE && elem.type < ENC_INFO_BUTT &&
-			    elem.flag > ENC_INFO_FLAG_NULL && elem.flag < ENC_INFO_FLAG_BUTT) {
+			    elem.flag > CODEC_INFO_FLAG_NULL && elem.flag < CODEC_INFO_FLAG_BUTT) {
 				elem.type = array_index_nospec(elem.type, ENC_INFO_BUTT);
 				priv->codec_info[elem.type].flag = elem.flag;
 				priv->codec_info[elem.type].val = elem.data;
@@ -752,11 +753,11 @@ static int rkvenc_dump_session(struct mpp_session *session, struct seq_file *seq
 
 		if (!flag)
 			continue;
-		if (flag == ENC_INFO_FLAG_NUMBER) {
+		if (flag == CODEC_INFO_FLAG_NUMBER) {
 			u32 data = priv->codec_info[i].val;
 
 			seq_printf(seq, "%8d|", data);
-		} else if (flag == ENC_INFO_FLAG_STRING) {
+		} else if (flag == CODEC_INFO_FLAG_STRING) {
 			const char *name = (const char *)&priv->codec_info[i].val;
 
 			seq_printf(seq, "%8s|", name);
@@ -960,6 +961,40 @@ static struct monitor_dev_profile enc_mdevp = {
 	.high_temp_adjust = rockchip_monitor_dev_high_temp_adjust,
 };
 
+static int rv1126_get_soc_info(struct device *dev, struct device_node *np,
+			       int *bin, int *process)
+{
+	int ret = 0, value = -EINVAL;
+
+	if (of_property_match_string(np, "nvmem-cell-names", "performance") >= 0) {
+		ret = rockchip_get_efuse_value(np, "performance", &value);
+		if (ret) {
+			dev_err(dev, "Failed to get soc performance value\n");
+			return ret;
+		}
+		if (value == 0x1)
+			*bin = 1;
+		else
+			*bin = 0;
+	}
+	if (*bin >= 0)
+		dev_info(dev, "bin=%d\n", *bin);
+
+	return ret;
+}
+
+static const struct of_device_id rockchip_rkvenc_of_match[] = {
+	{
+		.compatible = "rockchip,rv1109",
+		.data = (void *)&rv1126_get_soc_info,
+	},
+	{
+		.compatible = "rockchip,rv1126",
+		.data = (void *)&rv1126_get_soc_info,
+	},
+	{},
+};
+
 static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 {
 	struct rkvenc_dev *enc = to_rkvenc_dev(mpp);
@@ -982,7 +1017,7 @@ static int rkvenc_devfreq_init(struct mpp_dev *mpp)
 		return 0;
 	}
 
-	ret = rockchip_init_opp_table(mpp->dev, NULL,
+	ret = rockchip_init_opp_table(mpp->dev, rockchip_rkvenc_of_match,
 				      "leakage", "venc");
 	if (ret) {
 		dev_err(mpp->dev, "failed to init_opp_table\n");

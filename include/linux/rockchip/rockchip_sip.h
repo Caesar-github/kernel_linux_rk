@@ -33,6 +33,24 @@
 #define PSCI_SIP_VPU_RESET		0x8200000c
 #define SIP_BUS_CFG			0x8200000d
 #define SIP_LAST_LOG			0x8200000e
+#define SIP_SCMI_AGENT0			0x82000010
+#define SIP_SCMI_AGENT1			0x82000011
+#define SIP_SCMI_AGENT2			0x82000012
+#define SIP_SCMI_AGENT3			0x82000013
+#define SIP_SCMI_AGENT4			0x82000014
+#define SIP_SCMI_AGENT5			0x82000015
+#define SIP_SCMI_AGENT6			0x82000016
+#define SIP_SCMI_AGENT7			0x82000017
+#define SIP_SCMI_AGENT8			0x82000018
+#define SIP_SCMI_AGENT9			0x82000019
+#define SIP_SCMI_AGENT10		0x8200001a
+#define SIP_SCMI_AGENT11		0x8200001b
+#define SIP_SCMI_AGENT12		0x8200001c
+#define SIP_SCMI_AGENT13		0x8200001d
+#define SIP_SCMI_AGENT14		0x8200001e
+#define SIP_SCMI_AGENT15		0x8200001f
+#define SIP_SDEI_FIQ_DBG_SWITCH_CPU	0x82000020
+#define SIP_SDEI_FIQ_DBG_GET_EVENT_ID	0x82000021
 
 /* Rockchip Sip version */
 #define SIP_IMPLEMENT_V1                (1)
@@ -80,6 +98,7 @@
 #define APIOS_SUSPEND_CONFIG		0x06
 #define VIRTUAL_POWEROFF		0x07
 #define SUSPEND_WFI_TIME_MS		0x08
+#define LINUX_PM_STATE			0x09
 
 /* SIP_REMOTECTL_CFG call types */
 #define	REMOTECTL_SET_IRQ		0xf0
@@ -140,7 +159,9 @@ int sip_fiq_debugger_set_print_port(u32 port_phyaddr, u32 baudrate);
 int sip_fiq_debugger_request_share_memory(void);
 int sip_fiq_debugger_get_target_cpu(void);
 int sip_fiq_debugger_switch_cpu(u32 cpu);
+int sip_fiq_debugger_sdei_switch_cpu(u32 cur_cpu, u32 target_cpu, u32 flag);
 int sip_fiq_debugger_is_enabled(void);
+int sip_fiq_debugger_sdei_get_event_id(u32 *fiq, u32 *sw_cpu, u32 *flag);
 #else
 static inline struct arm_smccc_res sip_smc_get_atf_version(void)
 {
@@ -226,6 +247,8 @@ static inline int sip_fiq_debugger_set_print_port(u32 port_phyaddr,
 static inline int sip_fiq_debugger_request_share_memory(void) { return 0; }
 static inline int sip_fiq_debugger_get_target_cpu(void) { return 0; }
 static inline int sip_fiq_debugger_switch_cpu(u32 cpu) { return 0; }
+static inline int sip_fiq_debugger_sdei_switch_cpu(u32 cur_cpu, u32 target_cpu,
+						   u32 flag) { return 0; }
 static inline int sip_fiq_debugger_is_enabled(void) { return 0; }
 #endif
 

@@ -31,6 +31,7 @@
 #define MPP_FLAGS_LAST_MSG		(0x00000002)
 #define MPP_FLAGS_REG_FD_NO_TRANS	(0x00000004)
 #define MPP_FLAGS_SCL_FD_NO_TRANS	(0x00000008)
+#define MPP_FLAGS_REG_NO_OFFSET		(0x00000010)
 #define MPP_FLAGS_SECURE_MODE		(0x00010000)
 
 /**
@@ -95,6 +96,7 @@ enum MPP_DEV_COMMAND_TYPE {
 	MPP_CMD_SET_REG_WRITE		= MPP_CMD_SEND_BASE + 0,
 	MPP_CMD_SET_REG_READ		= MPP_CMD_SEND_BASE + 1,
 	MPP_CMD_SET_REG_ADDR_OFFSET	= MPP_CMD_SEND_BASE + 2,
+	MPP_CMD_SET_RCB_INFO		= MPP_CMD_SEND_BASE + 3,
 	MPP_CMD_SEND_BUTT,
 
 	MPP_CMD_POLL_BASE		= 0x300,
@@ -149,12 +151,23 @@ enum ENC_INFO_TYPE {
 	ENC_INFO_BUTT,
 };
 
-enum ENC_INFO_FLAGS {
-	ENC_INFO_FLAG_NULL		= 0,
-	ENC_INFO_FLAG_NUMBER,
-	ENC_INFO_FLAG_STRING,
+enum DEC_INFO_TYPE {
+	DEC_INFO_BASE		= 0,
+	DEC_INFO_WIDTH,
+	DEC_INFO_HEIGHT,
+	DEC_INFO_FORMAT,
+	DEC_INFO_BITDEPTH,
+	DEC_INFO_FPS,
 
-	ENC_INFO_FLAG_BUTT,
+	DEC_INFO_BUTT,
+};
+
+enum CODEC_INFO_FLAGS {
+	CODEC_INFO_FLAG_NULL	= 0,
+	CODEC_INFO_FLAG_NUMBER,
+	CODEC_INFO_FLAG_STRING,
+
+	CODEC_INFO_FLAG_BUTT,
 };
 
 /* data common struct for parse out */
@@ -272,7 +285,9 @@ struct mpp_dev {
 	struct mpp_iommu_info *iommu_info;
 
 	atomic_t reset_request;
+	atomic_t session_index;
 	atomic_t task_count;
+	atomic_t task_index;
 	/* task for work queue */
 	struct workqueue_struct *workq;
 	/* current task in running */
@@ -290,6 +305,7 @@ struct mpp_task;
 
 struct mpp_session {
 	enum MPP_DEVICE_TYPE device_type;
+	u32 index;
 	/* the session related device private data */
 	struct mpp_service *srv;
 	struct mpp_dev *mpp;
@@ -314,6 +330,7 @@ struct mpp_session {
 	/* trans info set by user */
 	int trans_count;
 	u16 trans_table[MPP_MAX_REG_TRANS_NUM];
+	u32 msg_flags;
 	/* link to mpp_service session_list */
 	struct list_head session_link;
 	/* private data */
@@ -357,12 +374,11 @@ struct mpp_task {
 	struct timeval start;
 	/* hardware info for current task */
 	struct mpp_hw_info *hw_info;
+	u32 task_index;
 	u32 *reg;
 };
 
 struct mpp_taskqueue {
-	/* lock for trigger work */
-	struct mutex work_lock;
 	/* work for taskqueue */
 	struct work_struct work;
 
@@ -519,6 +535,7 @@ struct reset_control *mpp_reset_control_get(struct mpp_dev *mpp,
 					    const char *name);
 
 u32 mpp_get_grf(struct mpp_grf_info *grf_info);
+bool mpp_grf_is_changed(struct mpp_grf_info *grf_info);
 int mpp_set_grf(struct mpp_grf_info *grf_info);
 
 int mpp_time_record(struct mpp_task *task);

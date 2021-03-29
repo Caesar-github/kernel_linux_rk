@@ -28,6 +28,9 @@
 #define CIF_DRIVER_NAME		"rkcif"
 #define CIF_VIDEODEVICE_NAME	"stream_cif"
 
+#define OF_CIF_MONITOR_PARA	"rockchip,cif-monitor"
+#define CIF_MONITOR_PARA_NUM	(5)
+
 #define RKCIF_SINGLE_STREAM	1
 #define RKCIF_STREAM_CIF	0
 #define CIF_DVP_VDEV_NAME CIF_VIDEODEVICE_NAME		"_dvp"
@@ -36,9 +39,15 @@
 #define CIF_MIPI_ID2_VDEV_NAME CIF_VIDEODEVICE_NAME	"_mipi_id2"
 #define CIF_MIPI_ID3_VDEV_NAME CIF_VIDEODEVICE_NAME	"_mipi_id3"
 
+#define CIF_DVP_ID0_VDEV_NAME CIF_VIDEODEVICE_NAME	"_dvp_id0"
+#define CIF_DVP_ID1_VDEV_NAME CIF_VIDEODEVICE_NAME	"_dvp_id1"
+#define CIF_DVP_ID2_VDEV_NAME CIF_VIDEODEVICE_NAME	"_dvp_id2"
+#define CIF_DVP_ID3_VDEV_NAME CIF_VIDEODEVICE_NAME	"_dvp_id3"
+
 /*
- * Rk1808 support 5 channel inputs simultaneously:
- * dvp + 4 mipi virtual channels
+ * RK1808 support 5 channel inputs simultaneously:
+ * dvp + 4 mipi virtual channels;
+ * RV1126/RK356X support 4 channels of BT.656/BT.1120/MIPI
  */
 #define RKCIF_MULTI_STREAMS_NUM	5
 #define RKCIF_STREAM_MIPI_ID0	0
@@ -47,6 +56,7 @@
 #define RKCIF_STREAM_MIPI_ID3	3
 #define RKCIF_MAX_STREAM_MIPI	4
 #define RKCIF_MAX_STREAM_LVDS	4
+#define RKCIF_MAX_STREAM_DVP	4
 #define RKCIF_STREAM_DVP	4
 
 #define RKCIF_MAX_SENSOR	2
@@ -301,14 +311,14 @@ struct rkcif_irq_stats {
 };
 
 /*
- * the causation to do cif reset work
+ * the detecting mode of cif reset timer
+ * related with dts property:rockchip,cif-monitor
  */
-enum rkcif_reset_src {
-	RKCIF_RESET_SRC_NON = 0x0,
-	RKCIF_RESET_SRC_NORMAL,
-	RKCIF_RESET_SRC_ERR_CSI2,
-	RKCIF_RESET_SRC_ERR_LVDS,
-	RKCIF_RESET_SRC_ERR_APP,
+enum rkcif_monitor_mode {
+	RKCIF_MONITOR_MODE_IDLE = 0x0,
+	RKCIF_MONITOR_MODE_CONTINUE,
+	RKCIF_MONITOR_MODE_TRIGGER,
+	RKCIF_MONITOR_MODE_HOTPLUG,
 };
 
 /*
@@ -320,23 +330,45 @@ struct rkcif_resume_info {
 
 struct rkcif_work_struct {
 	struct work_struct	work;
-	enum rkcif_reset_src	reset_src;
+	enum rkmodule_reset_src	reset_src;
 	struct rkcif_resume_info	resume_info;
 };
 
 struct rkcif_timer {
 	struct timer_list	timer;
 	spinlock_t		timer_lock;
+	spinlock_t		csi2_err_lock;
 	unsigned long		cycle;
+	/* unit: us */
+	unsigned long		line_end_cycle;
 	unsigned int		run_cnt;
 	unsigned int		max_run_cnt;
 	unsigned int		stop_index_of_run_cnt;
 	unsigned int		last_buf_wakeup_cnt;
-	unsigned int		csi_crc_cnt;
+	unsigned long		csi2_err_cnt_even;
+	unsigned long		csi2_err_cnt_odd;
+	unsigned int		csi2_err_ref_cnt;
+	unsigned int		csi2_err_fs_fe_cnt;
+	unsigned int		csi2_err_fs_fe_detect_cnt;
+	unsigned int		frm_num_of_monitor_cycle;
+	unsigned int		triggered_frame_num;
+	unsigned int		vts;
+	unsigned int		raw_height;
+	/* unit: ms */
+	unsigned int		err_time_interval;
+	unsigned long		frame_end_cycle_us;
+	unsigned int		notifer_called_cnt;
 	bool			is_triggered;
 	bool			is_buf_stop_update;
 	bool			is_running;
-	enum rkcif_reset_src	reset_src;
+	bool			is_csi2_err_occurred;
+	enum rkcif_monitor_mode	monitor_mode;
+	enum rkmodule_reset_src	reset_src;
+};
+
+struct rkcif_extend_info {
+	struct v4l2_pix_format_mplane	pixm;
+	bool is_extended;
 };
 
 /*
@@ -379,6 +411,8 @@ struct rkcif_stream {
 	struct v4l2_pix_format_mplane	pixm;
 	struct v4l2_rect		crop[CROP_SRC_MAX];
 	struct rkcif_fps_stats		fps_stats;
+	struct rkcif_extend_info	extend_line;
+	bool				is_dvp_yuv_addr_init;
 };
 
 struct rkcif_lvds_subdev {
@@ -392,6 +426,12 @@ struct rkcif_lvds_subdev {
 	const struct cif_input_fmt	*cif_fmt_in;
 	enum rkcif_lvds_state		state;
 	struct rkcif_sensor_info	sensor_self;
+	atomic_t			frm_sync_seq;
+};
+
+struct rkcif_dvp_sof_subdev {
+	struct rkcif_device *cifdev;
+	struct v4l2_subdev sd;
 	atomic_t			frm_sync_seq;
 };
 
@@ -457,7 +497,7 @@ struct rkcif_device {
 	struct rkcif_buffer		*rdbk_buf[RDBK_MAX];
 	struct rkcif_luma_vdev		luma_vdev;
 	struct rkcif_lvds_subdev	lvds_subdev;
-
+	struct rkcif_dvp_sof_subdev	dvp_sof_subdev;
 	struct rkcif_hw *hw_dev;
 	irqreturn_t (*isr_hdl)(int irq, struct rkcif_device *cif_dev);
 	int inf_id;
@@ -470,8 +510,13 @@ struct rkcif_device {
 
 	struct notifier_block		reset_notifier; /* reset for mipi csi crc err */
 	struct rkcif_work_struct	reset_work;
+	bool				reset_work_cancel;
 	struct rkcif_timer		reset_watchdog_timer;
+	struct work_struct		async_register_work;
 	unsigned int			buf_wake_up_cnt;
+
+	bool				iommu_en;
+	unsigned int			dvp_sof_in_oneframe;
 };
 
 extern struct platform_driver rkcif_plat_drv;
@@ -500,6 +545,8 @@ void rkcif_soft_reset(struct rkcif_device *cif_dev,
 		      bool is_rst_iommu);
 int rkcif_register_lvds_subdev(struct rkcif_device *dev);
 void rkcif_unregister_lvds_subdev(struct rkcif_device *dev);
+int rkcif_register_dvp_sof_subdev(struct rkcif_device *dev);
+void rkcif_unregister_dvp_sof_subdev(struct rkcif_device *dev);
 void rkcif_irq_lite_lvds(struct rkcif_device *cif_dev);
 u32 rkcif_get_sof(struct rkcif_device *cif_dev);
 int rkcif_plat_init(struct rkcif_device *cif_dev, struct device_node *node, int inf_id);
@@ -510,5 +557,6 @@ int rkcif_reset_notifier(struct notifier_block *nb, unsigned long action, void *
 void rkcif_reset_watchdog_timer_handler(struct timer_list *t);
 void rkcif_config_dvp_clk_sampling_edge(struct rkcif_device *dev,
 					enum rkcif_clk_edge edge);
+void rkcif_enable_dvp_clk_dual_edge(struct rkcif_device *dev, bool on);
 
 #endif

@@ -213,23 +213,23 @@ void do_kernel_restart(char *cmd)
 	atomic_notifier_call_chain(&restart_handler_list, reboot_mode, cmd);
 }
 
-static ATOMIC_NOTIFIER_HEAD(i2c_restart_handler_list);
+static ATOMIC_NOTIFIER_HEAD(pre_restart_handler_list);
 
-int register_i2c_restart_handler(struct notifier_block *nb)
+int register_pre_restart_handler(struct notifier_block *nb)
 {
-	return atomic_notifier_chain_register(&i2c_restart_handler_list, nb);
+	return atomic_notifier_chain_register(&pre_restart_handler_list, nb);
 }
-EXPORT_SYMBOL(register_i2c_restart_handler);
+EXPORT_SYMBOL(register_pre_restart_handler);
 
-int unregister_i2c_restart_handler(struct notifier_block *nb)
+int unregister_pre_restart_handler(struct notifier_block *nb)
 {
-	return atomic_notifier_chain_unregister(&i2c_restart_handler_list, nb);
+	return atomic_notifier_chain_unregister(&pre_restart_handler_list, nb);
 }
-EXPORT_SYMBOL(unregister_i2c_restart_handler);
+EXPORT_SYMBOL(unregister_pre_restart_handler);
 
-void do_kernel_i2c_restart(char *cmd)
+void do_kernel_pre_restart(char *cmd)
 {
-	atomic_notifier_call_chain(&i2c_restart_handler_list, reboot_mode, cmd);
+	atomic_notifier_call_chain(&pre_restart_handler_list, reboot_mode, cmd);
 }
 
 void migrate_to_reboot_cpu(void)
@@ -568,22 +568,22 @@ static int __init reboot_setup(char *str)
 			break;
 
 		case 's':
-		{
-			int rc;
-
-			if (isdigit(*(str+1))) {
-				rc = kstrtoint(str+1, 0, &reboot_cpu);
-				if (rc)
-					return rc;
-			} else if (str[1] == 'm' && str[2] == 'p' &&
-				   isdigit(*(str+3))) {
-				rc = kstrtoint(str+3, 0, &reboot_cpu);
-				if (rc)
-					return rc;
-			} else
+			if (isdigit(*(str+1)))
+				reboot_cpu = simple_strtoul(str+1, NULL, 0);
+			else if (str[1] == 'm' && str[2] == 'p' &&
+							isdigit(*(str+3)))
+				reboot_cpu = simple_strtoul(str+3, NULL, 0);
+			else
 				*mode = REBOOT_SOFT;
+			if (reboot_cpu >= num_possible_cpus()) {
+				pr_err("Ignoring the CPU number in reboot= option. "
+				       "CPU %d exceeds possible cpu number %d\n",
+				       reboot_cpu, num_possible_cpus());
+				reboot_cpu = 0;
+				break;
+			}
 			break;
-		}
+
 		case 'g':
 			*mode = REBOOT_GPIO;
 			break;

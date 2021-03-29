@@ -5,6 +5,7 @@
 #define _RKISP_BRIDGE_H
 
 #include "linux/platform_device.h"
+#include <linux/rkisp1-config.h>
 #include "isp_ispp.h"
 
 #define BRIDGE_DEV_NAME DRIVER_NAME "-bridge-ispp"
@@ -40,6 +41,12 @@ struct rkisp_bridge_buf {
 	struct rkisp_dummy_buffer dummy[GROUP_BUF_MAX];
 };
 
+struct rkisp_bridge_work {
+	struct work_struct work;
+	struct rkisp_bridge_device *dev;
+	void *param;
+};
+
 struct rkisp_bridge_device {
 	struct rkisp_device *ispdev;
 	struct v4l2_subdev sd;
@@ -55,12 +62,18 @@ struct rkisp_bridge_device {
 	bool stopping;
 	bool linked;
 	bool en;
+	struct workqueue_struct *wq;
 };
 
 int rkisp_register_bridge_subdev(struct rkisp_device *dev,
 				 struct v4l2_device *v4l2_dev);
 void rkisp_unregister_bridge_subdev(struct rkisp_device *dev);
+int rkisp_bridge_get_fbcbuf_fd(struct rkisp_device *dev, struct isp2x_buf_idxfd *idxfd);
 void rkisp_bridge_isr(u32 *mis_val, struct rkisp_device *dev);
+void rkisp_bridge_sendtopp_buffer(struct rkisp_device *dev, u32 dev_id, u32 buf_idx);
+void rkisp_bridge_save_spbuf(struct rkisp_device *dev, struct rkisp_buffer *sp_buf);
+void rkisp_bridge_stop_spstream(struct rkisp_device *dev);
+void rkisp_bridge_update_mi(struct rkisp_device *dev);
 void rkisp_get_bridge_sd(struct platform_device *dev,
 			 struct v4l2_subdev **sd);
 #endif

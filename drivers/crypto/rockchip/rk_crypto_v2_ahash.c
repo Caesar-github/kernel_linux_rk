@@ -605,6 +605,8 @@ static int rk_cra_hash_init(struct crypto_tfm *tfm)
 				 sizeof(struct rk_ahash_rctx) +
 				 crypto_ahash_reqsize(ctx->fallback_tfm));
 
+	algt->alg.hash.halg.statesize = crypto_ahash_statesize(ctx->fallback_tfm);
+
 	return 0;
 }
 
@@ -613,9 +615,6 @@ static void rk_cra_hash_exit(struct crypto_tfm *tfm)
 	struct rk_ahash_ctx *ctx = crypto_tfm_ctx(tfm);
 
 	CRYPTO_TRACE();
-
-	/* clear HASH_CTL */
-	CRYPTO_WRITE(ctx->dev, CRYPTO_HASH_CTL, CRYPTO_WRITE_MASK_ALL | 0);
 
 	if (ctx->fallback_tfm)
 		crypto_free_ahash(ctx->fallback_tfm);

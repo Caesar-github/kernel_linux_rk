@@ -26,6 +26,7 @@
 #define DWCMSHC_VER_TYPE		0x504
 #define DWCMSHC_HOST_CTRL3		0x508
 #define DWCMSHC_EMMC_CONTROL		0x52c
+#define DWCMSHC_EMMC_ATCTRL		0x540
 
 /* Rockchip specific Registers */
 #define DWCMSHC_EMMC_DLL_CTRL		0x800
@@ -61,6 +62,7 @@ struct dwcmshc_priv {
 	/* Rockchip specified optional clocks */
 	struct clk_bulk_data rockchip_clks[ROCKCHIP_MAX_CLKS];
 	int txclk_tapnum;
+	unsigned int actual_clk;
 };
 
 /*
@@ -136,10 +138,6 @@ static void dwcmshc_rk_set_clock(struct sdhci_host *host, unsigned int clock)
 
 	host->mmc->actual_clock = 0;
 
-	/* DO NOT TOUCH THIS SETTING */
-	extra = DWCMSHC_EMMC_DLL_DLYENA |
-		DLL_RXCLK_NO_INVERTER << DWCMSHC_EMMC_DLL_RXCLK_SRCSEL;
-	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
 
 	if (clock == 0)
 		return;
@@ -154,13 +152,32 @@ static void dwcmshc_rk_set_clock(struct sdhci_host *host, unsigned int clock)
 
 	sdhci_set_clock(host, clock);
 
-	if (clock <= 400000)
+	/* Disable cmd conflict check */
+	extra = sdhci_readl(host, DWCMSHC_HOST_CTRL3);
+	extra &= ~BIT(0);
+	sdhci_writel(host, extra, DWCMSHC_HOST_CTRL3);
+
+	if (clock <= 400000) {
+		/* Disable DLL and reset both of sample and drive clock */
+		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_CTRL);
+		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_RXCLK);
+		sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_TXCLK);
 		return;
+	}
 
 	/* Reset DLL */
 	sdhci_writel(host, BIT(1), DWCMSHC_EMMC_DLL_CTRL);
 	udelay(1);
 	sdhci_writel(host, 0x0, DWCMSHC_EMMC_DLL_CTRL);
+
+	/*
+	 * We shouldn't set DLL_RXCLK_NO_INVERTER for identify mode but
+	 * we must set it in higher speed mode.
+	 */
+	extra = DWCMSHC_EMMC_DLL_DLYENA |
+		DLL_RXCLK_NO_INVERTER << DWCMSHC_EMMC_DLL_RXCLK_SRCSEL;
+
+	sdhci_writel(host, extra, DWCMSHC_EMMC_DLL_RXCLK);
 
 	/* Init DLL settings */
 	extra = 0x5 << DWCMSHC_EMMC_DLL_START_POINT |
@@ -174,6 +191,11 @@ static void dwcmshc_rk_set_clock(struct sdhci_host *host, unsigned int clock)
 		dev_err(mmc_dev(host->mmc), "DLL lock timeout!\n");
 		return;
 	}
+
+	extra = 0x1 << 16 | /* tune clock stop en */
+		0x2 << 17 | /* pre-change delay */
+		0x3 << 19;  /* post-change delay */
+	sdhci_writel(host, extra, DWCMSHC_EMMC_ATCTRL);
 
 	if (host->mmc->ios.timing == MMC_TIMING_MMC_HS200 ||
 	    host->mmc->ios.timing == MMC_TIMING_MMC_HS400)
@@ -205,6 +227,7 @@ static const struct sdhci_ops sdhci_dwcmshc_rk_ops = {
 	.set_uhs_signaling	= dwcmshc_set_uhs_signaling,
 	.get_max_clock		= sdhci_pltfm_clk_get_max_clock,
 	.reset			= sdhci_reset,
+	.adma_write_desc	= dwcmshc_adma_write_desc,
 };
 
 static const struct sdhci_pltfm_data sdhci_dwcmshc_pdata = {
@@ -214,9 +237,10 @@ static const struct sdhci_pltfm_data sdhci_dwcmshc_pdata = {
 
 static const struct sdhci_pltfm_data sdhci_dwcmshc_rk_pdata = {
 	.ops = &sdhci_dwcmshc_rk_ops,
-	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN,
+	.quirks = SDHCI_QUIRK_CAP_CLOCK_BASE_BROKEN |
+		  SDHCI_QUIRK_BROKEN_TIMEOUT_VAL,
 	.quirks2 = SDHCI_QUIRK2_PRESET_VALUE_BROKEN |
-			SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN,
+		   SDHCI_QUIRK2_CLOCK_DIV_ZERO_BROKEN,
 };
 
 static int rockchip_pltf_init(struct sdhci_host *host, struct dwcmshc_priv *priv)
@@ -245,6 +269,9 @@ static int rockchip_pltf_init(struct sdhci_host *host, struct dwcmshc_priv *priv
 
 	/* Disable cmd conflict check */
 	sdhci_writel(host, 0x0, DWCMSHC_HOST_CTRL3);
+	/* Reset previous settings */
+	sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_TXCLK);
+	sdhci_writel(host, 0, DWCMSHC_EMMC_DLL_STRBIN);
 	return 0;
 }
 
@@ -408,16 +435,11 @@ static int dwcmshc_runtime_suspend(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct dwcmshc_priv *priv = sdhci_pltfm_priv(pltfm_host);
-	int ret;
 
-	ret = sdhci_runtime_suspend_host(host);
+	priv->actual_clk = host->mmc->actual_clock;
+	sdhci_set_clock(host, 0);
 
-	clk_disable_unprepare(pltfm_host->clk);
-	if (!IS_ERR(priv->bus_clk))
-		clk_disable_unprepare(priv->bus_clk);
-	clk_bulk_disable_unprepare(ROCKCHIP_MAX_CLKS, priv->rockchip_clks);
-
-	return ret;
+	return 0;
 }
 
 static int dwcmshc_runtime_resume(struct device *dev)
@@ -425,23 +447,10 @@ static int dwcmshc_runtime_resume(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
 	struct dwcmshc_priv *priv = sdhci_pltfm_priv(pltfm_host);
-	int ret;
 
-	ret = clk_prepare_enable(pltfm_host->clk);
-	if (ret)
-		return ret;
+	sdhci_set_clock(host, priv->actual_clk);
 
-	if (!IS_ERR(priv->bus_clk)) {
-		ret = clk_prepare_enable(priv->bus_clk);
-		if (ret)
-			return ret;
-	}
-
-	ret = clk_bulk_prepare_enable(ROCKCHIP_MAX_CLKS, priv->rockchip_clks);
-	if (ret)
-		return ret;
-
-	return sdhci_runtime_resume_host(host);
+	return 0;
 }
 #endif
 

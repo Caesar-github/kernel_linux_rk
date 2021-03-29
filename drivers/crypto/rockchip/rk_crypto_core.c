@@ -29,13 +29,12 @@
 	.valid_algs_num = ARRAY_SIZE(names),\
 	.total_algs = crypto_v1_algs,\
 	.total_algs_num = ARRAY_SIZE(crypto_v1_algs),\
-	.clks = crypto_v1_clks,\
-	.clks_num = ARRAY_SIZE(crypto_v1_clks),\
 	.rsts = crypto_v1_rsts,\
 	.rsts_num = ARRAY_SIZE(crypto_v1_rsts),\
 	.hw_init = rk_hw_crypto_v1_init,\
 	.hw_deinit = rk_hw_crypto_v1_deinit,\
 	.hw_info_size = sizeof(struct rk_hw_crypto_v1_info),\
+	.default_pka_offset = 0,\
 }
 
 #define RK_CRYPTO_V2_SOC_DATA_INIT(names, soft_aes_192) {\
@@ -44,13 +43,12 @@
 	.valid_algs_num = ARRAY_SIZE(names),\
 	.total_algs = crypto_v2_algs,\
 	.total_algs_num = ARRAY_SIZE(crypto_v2_algs),\
-	.clks = crypto_v2_clks,\
-	.clks_num = ARRAY_SIZE(crypto_v2_clks),\
 	.rsts = crypto_v2_rsts,\
 	.rsts_num = ARRAY_SIZE(crypto_v2_rsts),\
 	.hw_init = rk_hw_crypto_v2_init,\
 	.hw_deinit = rk_hw_crypto_v2_deinit,\
 	.hw_info_size = sizeof(struct rk_hw_crypto_v2_info),\
+	.default_pka_offset = 0x0480,\
 }
 
 static int rk_crypto_enable_clk(struct rk_crypto_info *dev)
@@ -59,8 +57,8 @@ static int rk_crypto_enable_clk(struct rk_crypto_info *dev)
 
 	dev_dbg(dev->dev, "clk_bulk_prepare_enable.\n");
 
-	ret = clk_bulk_prepare_enable(dev->soc_data->clks_num,
-				      &dev->clk_bulks[0]);
+	ret = clk_bulk_prepare_enable(dev->clks_num,
+				      dev->clk_bulks);
 	if (ret < 0)
 		dev_err(dev->dev, "failed to enable clks %d\n", ret);
 
@@ -71,7 +69,7 @@ static void rk_crypto_disable_clk(struct rk_crypto_info *dev)
 {
 	dev_dbg(dev->dev, "clk_bulk_disable_unprepare.\n");
 
-	clk_bulk_disable_unprepare(dev->soc_data->clks_num, &dev->clk_bulks[0]);
+	clk_bulk_disable_unprepare(dev->clks_num, dev->clk_bulks);
 }
 
 static int check_alignment(struct scatterlist *sg_src,
@@ -95,7 +93,10 @@ static int rk_load_data(struct rk_crypto_info *dev,
 			struct scatterlist *sg_src,
 			struct scatterlist *sg_dst)
 {
+	int ret = -EINVAL;
 	unsigned int count;
+
+	mutex_lock(&dev->mutex);
 
 	dev->aligned = dev->aligned ?
 		check_alignment(sg_src, sg_dst, dev->align_size) :
@@ -107,7 +108,8 @@ static int rk_load_data(struct rk_crypto_info *dev,
 		if (!dma_map_sg(dev->dev, sg_src, 1, DMA_TO_DEVICE)) {
 			dev_err(dev->dev, "[%s:%d] dma_map_sg(src)  error\n",
 				__func__, __LINE__);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto error;
 		}
 		dev->addr_in = sg_dma_address(sg_src);
 
@@ -118,7 +120,8 @@ static int rk_load_data(struct rk_crypto_info *dev,
 					__func__, __LINE__);
 				dma_unmap_sg(dev->dev, sg_src, 1,
 					     DMA_TO_DEVICE);
-				return -EINVAL;
+				ret = -EINVAL;
+				goto error;
 			}
 			dev->addr_out = sg_dma_address(sg_dst);
 		}
@@ -131,14 +134,16 @@ static int rk_load_data(struct rk_crypto_info *dev,
 					dev->total - dev->left_bytes)) {
 			dev_err(dev->dev, "[%s:%d] pcopy err\n",
 				__func__, __LINE__);
-			return -EINVAL;
+			ret = -EINVAL;
+			goto error;
 		}
 		dev->left_bytes -= count;
 		sg_init_one(&dev->sg_tmp, dev->addr_vir, count);
 		if (!dma_map_sg(dev->dev, &dev->sg_tmp, 1, DMA_TO_DEVICE)) {
 			dev_err(dev->dev, "[%s:%d] dma_map_sg(sg_tmp)  error\n",
 				__func__, __LINE__);
-			return -ENOMEM;
+			ret = -ENOMEM;
+			goto error;
 		}
 		dev->addr_in = sg_dma_address(&dev->sg_tmp);
 
@@ -150,13 +155,18 @@ static int rk_load_data(struct rk_crypto_info *dev,
 					__func__, __LINE__);
 				dma_unmap_sg(dev->dev, &dev->sg_tmp, 1,
 					     DMA_TO_DEVICE);
-				return -ENOMEM;
+				ret = -ENOMEM;
+				goto error;
 			}
 			dev->addr_out = sg_dma_address(&dev->sg_tmp);
 		}
 	}
+
 	dev->count = count;
 	return 0;
+error:
+	mutex_unlock(&dev->mutex);
+	return ret;
 }
 
 static void rk_unload_data(struct rk_crypto_info *dev)
@@ -170,6 +180,8 @@ static void rk_unload_data(struct rk_crypto_info *dev)
 		sg_out = dev->aligned ? dev->sg_dst : &dev->sg_tmp;
 		dma_unmap_sg(dev->dev, sg_out, 1, DMA_FROM_DEVICE);
 	}
+
+	mutex_unlock(&dev->mutex);
 }
 
 static irqreturn_t rk_crypto_irq_handle(int irq, void *dev_id)
@@ -352,8 +364,6 @@ static void rk_crypto_request(struct rk_crypto_info *dev, const char *name)
 {
 	CRYPTO_TRACE("Crypto is requested by %s\n", name);
 
-	mutex_lock(&dev->mutex);
-
 	rk_crypto_enable_clk(dev);
 }
 
@@ -362,8 +372,6 @@ static void rk_crypto_release(struct rk_crypto_info *dev, const char *name)
 	CRYPTO_TRACE("Crypto is released by %s\n", name);
 
 	rk_crypto_disable_clk(dev);
-
-	mutex_unlock(&dev->mutex);
 }
 
 static void rk_crypto_action(void *data)
@@ -373,13 +381,6 @@ static void rk_crypto_action(void *data)
 	if (crypto_info->rst)
 		reset_control_assert(crypto_info->rst);
 }
-
-static const char * const crypto_v2_clks[] = {
-	"hclk",
-	"aclk",
-	"sclk",
-	"apb_pclk",
-};
 
 static const char * const crypto_v2_rsts[] = {
 	"crypto-rst",
@@ -448,13 +449,6 @@ static const struct rk_crypto_soc_data px30_soc_data =
 static const struct rk_crypto_soc_data rv1126_soc_data =
 	RK_CRYPTO_V2_SOC_DATA_INIT(rv1126_algs_name, true);
 
-static const char * const crypto_v1_clks[] = {
-	"hclk",
-	"aclk",
-	"sclk",
-	"apb_pclk",
-};
-
 static const char * const crypto_v1_rsts[] = {
 	"crypto-rst",
 };
@@ -511,7 +505,7 @@ static int rk_crypto_probe(struct platform_device *pdev)
 	struct device_node *np = pdev->dev.of_node;
 	const struct of_device_id *match;
 	struct rk_crypto_info *crypto_info;
-	int err = 0, i;
+	int err = 0;
 
 	crypto_info = devm_kzalloc(&pdev->dev,
 				   sizeof(*crypto_info), GFP_KERNEL);
@@ -522,13 +516,6 @@ static int rk_crypto_probe(struct platform_device *pdev)
 
 	match = of_match_node(crypto_of_id_table, np);
 	crypto_info->soc_data = (struct rk_crypto_soc_data *)match->data;
-
-	crypto_info->clk_bulks =
-		devm_kzalloc(&pdev->dev, sizeof(*crypto_info->clk_bulks) *
-			     crypto_info->soc_data->clks_num, GFP_KERNEL);
-
-	for (i = 0; i < crypto_info->soc_data->clks_num; i++)
-		crypto_info->clk_bulks[i].id = crypto_info->soc_data->clks[i];
 
 	if (crypto_info->soc_data->rsts[0]) {
 		crypto_info->rst =
@@ -549,6 +536,7 @@ static int rk_crypto_probe(struct platform_device *pdev)
 
 	spin_lock_init(&crypto_info->lock);
 
+	/* get crypto base */
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	crypto_info->reg = devm_ioremap_resource(&pdev->dev, res);
 	if (IS_ERR(crypto_info->reg)) {
@@ -556,9 +544,14 @@ static int rk_crypto_probe(struct platform_device *pdev)
 		goto err_crypto;
 	}
 
-	err = devm_clk_bulk_get(dev, crypto_info->soc_data->clks_num,
-				crypto_info->clk_bulks);
-	if (err) {
+	/* get pka base, if pka reg not set, pka reg = crypto + pka offset */
+	res = platform_get_resource(pdev, IORESOURCE_MEM, 1);
+	crypto_info->pka_reg = devm_ioremap_resource(&pdev->dev, res);
+	if (IS_ERR(crypto_info->pka_reg))
+		crypto_info->pka_reg = crypto_info->reg + crypto_info->soc_data->default_pka_offset;
+
+	crypto_info->clks_num = devm_clk_bulk_get_all(&pdev->dev, &crypto_info->clk_bulks);
+	if (crypto_info->clks_num < 0) {
 		dev_err(&pdev->dev, "failed to get clks property\n");
 		goto err_crypto;
 	}

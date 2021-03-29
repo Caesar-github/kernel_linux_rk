@@ -28,7 +28,7 @@
 #include <linux/version.h>
 #include <linux/rk-camera-module.h>
 #include <linux/completion.h>
-#include "rk_vcm_head.h"
+#include <linux/rk_vcm_head.h>
 
 #define DRIVER_VERSION	KERNEL_VERSION(0, 0x01, 0x00)
 
@@ -92,7 +92,7 @@ static int motor_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_IRIS_ABSOLUTE:
 		motor->pwm_state.enabled = true;
 		motor->pwm_state.duty_cycle =
-			(u64)motor->pwm_state.period * ctrl->val / IRIS_MAX_LOG;
+			div64_u64((u64)motor->pwm_state.period * ctrl->val, IRIS_MAX_LOG);
 		pwm_apply_state(motor->pwm, &motor->pwm_state);
 		dev_dbg(motor->dev, "iris, ctrl->val %d, pwm duty %lld, period %lld, polarity %d\n",
 			ctrl->val,

@@ -44,7 +44,7 @@
 	hdmi_sound: hdmi-sound {
 		compatible = "simple-audio-card";
 		simple-audio-card,format = "i2s";
-		simple-audio-card,mclk-fs = <256>;
+		simple-audio-card,mclk-fs = <128>;
 		simple-audio-card,name = "hdmi-sound";
 		status = "okay";
 
@@ -53,6 +53,20 @@
 		};
 		simple-audio-card,codec {
 				sound-dai = <&hdmi>;
+		};
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		rknpu_reserved: rknpu {
+			compatible = "shared-dma-pool";
+			inactive;
+			reusable;
+			size = <0x0 0x20000000>;
+			alignment = <0x0 0x1000>;
 		};
 	};
 
@@ -94,13 +108,14 @@
 		vin-supply = <&dc_12v>;
 	};
 
-	vcc5v0_otg: vcc5v0-otg-regulator {
+	vcc5v0_host: vcc5v0-host-regulator {
 		compatible = "regulator-fixed";
 		enable-active-high;
 		gpio = <&gpio0 RK_PA5 GPIO_ACTIVE_HIGH>;
 		pinctrl-names = "default";
-		pinctrl-0 = <&vcc5v0_otg_en>;
-		regulator-name = "vcc5v0_otg";
+		pinctrl-0 = <&vcc5v0_host_en>;
+		regulator-name = "vcc5v0_host";
+		regulator-always-on;
 	};
 
 	vcc_1v8: vcc_1v8 {
@@ -162,8 +177,16 @@
 	};
 };
 
+&combphy0_us {
+	status = "okay";
+};
+
 &cpu0 {
 	cpu-supply = <&vdd_cpu>;
+};
+
+&cpu0_opp_table {
+	/delete-node/ opp-1992000000;
 };
 
 &dsi0_in_vp0 {
@@ -255,6 +278,14 @@
 		     &i2s1m0_sdo0>;
 };
 
+&iep {
+	status = "okay";
+};
+
+&iep_mmu {
+	status = "okay";
+};
+
 &jpegd {
 	status = "okay";
 };
@@ -272,10 +303,6 @@
 };
 
 &mpp_srv {
-	status = "okay";
-};
-
-&nandc0 {
 	status = "okay";
 };
 
@@ -305,7 +332,20 @@
 	status = "okay";
 };
 
+&rknpu {
+	memory-region = <&rknpu_reserved>;
+	rknpu-supply = <&vdd_npu>;
+	status = "okay";
+};
+
+&rknpu_mmu {
+	status = "disabled";
+};
+
 &rkvdec {
+	/delete-property/ rockchip,sram;
+	/delete-property/ rockchip,rcb-iova;
+	rockchip,default-max-load = <100>;
 	status = "okay";
 };
 
@@ -319,6 +359,11 @@
 
 &rkvenc_mmu {
 	status = "okay";
+};
+
+&route_hdmi {
+	status = "okay";
+	connect = <&vp0_out_hdmi>;
 };
 
 &saradc {
@@ -346,22 +391,22 @@
 };
 
 &u2phy0_host {
-	phy-supply = <&vcc5v0_otg>;
+	phy-supply = <&vcc5v0_host>;
 	status = "okay";
 };
 
 &u2phy0_otg {
-	vbus-supply = <&vcc5v0_otg>;
+	phy-supply = <&vcc5v0_host>;
 	status = "okay";
 };
 
 &u2phy1_host {
-	phy-supply = <&vcc5v0_otg>;
+	phy-supply = <&vcc5v0_host>;
 	status = "okay";
 };
 
 &u2phy1_otg {
-	phy-supply = <&vcc5v0_otg>;
+	phy-supply = <&vcc5v0_host>;
 	status = "okay";
 };
 
@@ -390,10 +435,8 @@
 };
 
 &usbdrd_dwc3 {
-	dr_mode = "peripheral";
-	phys = <&u2phy0_otg>;
-	phy-names = "usb2-phy";
-	maximum-speed = "high-speed";
+	dr_mode = "otg";
+	extcon = <&usb2phy0>;
 	status = "okay";
 };
 
@@ -404,6 +447,7 @@
 &usbhost_dwc3 {
 	phys = <&u2phy0_host>;
 	phy-names = "usb2-phy";
+	maximum-speed = "high-speed";
 	status = "okay";
 };
 
@@ -429,6 +473,8 @@
 
 &vop {
 	status = "okay";
+	assigned-clocks = <&cru DCLK_VOP1>;
+	assigned-clock-parents = <&cru PLL_VPLL>;
 };
 
 &vop_mmu {
@@ -437,7 +483,7 @@
 
 &pinctrl {
 	usb {
-		vcc5v0_otg_en: vcc5v0-otg-en {
+		vcc5v0_host_en: vcc5v0-host-en {
 			rockchip,pins = <0 RK_PA5 RK_FUNC_GPIO &pcfg_pull_none>;
 		};
 	};

@@ -27,7 +27,7 @@ int rkispp_debug;
 module_param_named(debug, rkispp_debug, int, 0644);
 MODULE_PARM_DESC(debug, "Debug level (0-3)");
 
-bool rkispp_clk_dbg;
+static bool rkispp_clk_dbg;
 module_param_named(clk_dbg, rkispp_clk_dbg, bool, 0644);
 MODULE_PARM_DESC(clk_dbg, "rkispp clk set by user");
 
@@ -46,6 +46,27 @@ MODULE_PARM_DESC(stream_sync, "rkispp stream sync output");
 static char rkispp_version[RKISPP_VERNO_LEN];
 module_param_string(version, rkispp_version, RKISPP_VERNO_LEN, 0444);
 MODULE_PARM_DESC(version, "version number");
+
+bool rkispp_reg_withstream;
+module_param_named(sendreg_withstream, rkispp_reg_withstream, bool, 0644);
+MODULE_PARM_DESC(sendreg_withstream, "rkispp send reg out with stream");
+
+char rkispp_reg_withstream_video_name[RKISPP_VIDEO_NAME_LEN];
+module_param_string(sendreg_withstream_video_name, rkispp_reg_withstream_video_name,
+		    RKISPP_VIDEO_NAME_LEN, 0644);
+MODULE_PARM_DESC(sendreg_withstream, "rkispp video send reg out with stream");
+
+unsigned int rkispp_debug_reg = 0x1F;
+module_param_named(debug_reg, rkispp_debug_reg, uint, 0644);
+MODULE_PARM_DESC(debug_reg, "rkispp debug register");
+
+void rkispp_set_clk_rate(struct clk *clk, unsigned long rate)
+{
+	if (rkispp_clk_dbg)
+		return;
+
+	clk_set_rate(clk, rate);
+}
 
 static void get_remote_node_dev(struct rkispp_device *ispp_dev)
 {
@@ -160,9 +181,16 @@ static int rkispp_create_links(struct rkispp_device *ispp_dev)
 	if (ret < 0)
 		return ret;
 
-	/* default enable tnr (2to1), nr, sharp */
-	ispp_dev->stream_vdev.module_ens =
-		ISPP_MODULE_TNR | ISPP_MODULE_NR | ISPP_MODULE_SHP;
+	stream = &stream_vdev->stream[STREAM_VIR];
+	stream->linked = flags;
+	sink = &stream->vnode.vdev.entity;
+	ret = media_create_pad_link(source, RKISPP_PAD_SOURCE,
+				    sink, 0, flags);
+	if (ret < 0)
+		return ret;
+
+	/* default enable */
+	ispp_dev->stream_vdev.module_ens = ISPP_MODULE_NR | ISPP_MODULE_SHP;
 	return 0;
 }
 
@@ -225,7 +253,7 @@ static int rkispp_plat_probe(struct platform_device *pdev)
 	ispp_dev = devm_kzalloc(dev, sizeof(*ispp_dev), GFP_KERNEL);
 	if (!ispp_dev)
 		return -ENOMEM;
-	ispp_dev->sw_base_addr = devm_kzalloc(dev, ISPP_SW_MAX_SIZE, GFP_KERNEL);
+	ispp_dev->sw_base_addr = devm_kzalloc(dev, RKISP_ISPP_SW_MAX_SIZE, GFP_KERNEL);
 	if (!ispp_dev->sw_base_addr)
 		return -ENOMEM;
 
@@ -303,8 +331,6 @@ static int __maybe_unused rkispp_runtime_suspend(struct device *dev)
 {
 	struct rkispp_device *ispp_dev = dev_get_drvdata(dev);
 	int ret;
-
-	rkispp_free_common_dummy_buf(ispp_dev);
 
 	mutex_lock(&ispp_dev->hw_dev->dev_lock);
 	ret = pm_runtime_put_sync(ispp_dev->hw_dev->dev);

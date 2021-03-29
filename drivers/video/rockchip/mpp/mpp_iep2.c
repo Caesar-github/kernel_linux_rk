@@ -249,9 +249,17 @@ static int iep2_process_reg_fd(struct mpp_session *session,
 	u32 *paddr = &task->params.src[0].y;
 
 	for (i = 0; i < addr_num; ++i) {
+		int usr_fd;
+		u32 offset;
 		struct mpp_mem_region *mem_region = NULL;
-		int usr_fd = paddr[i] & 0x3FF;
-		int offset = paddr[i] >> 10;
+
+		if (session->msg_flags & MPP_FLAGS_REG_NO_OFFSET) {
+			usr_fd = paddr[i];
+			offset = 0;
+		} else {
+			usr_fd = paddr[i] & 0x3ff;
+			offset = paddr[i] >> 10;
+		}
 
 		if (usr_fd == 0 || iep2_addr_rnum[i] == -1)
 			continue;
@@ -601,10 +609,10 @@ static int iep2_run(struct mpp_dev *mpp,
 static int iep2_irq(struct mpp_dev *mpp)
 {
 	mpp->irq_status = mpp_read(mpp, IEP2_REG_INT_STS);
-	if (!(mpp->irq_status))
-		return IRQ_NONE;
-
 	mpp_write(mpp, IEP2_REG_INT_CLR, 0xffffffff);
+
+	if (!IEP2_REG_RO_VALID_INT_STS(mpp->irq_status))
+		return IRQ_NONE;
 
 	return IRQ_WAKE_THREAD;
 }
@@ -854,15 +862,6 @@ static int iep2_set_freq(struct mpp_dev *mpp,
 	return 0;
 }
 
-static int iep2_reduce_freq(struct mpp_dev *mpp)
-{
-	struct iep2_dev *iep = to_iep2_dev(mpp);
-
-	mpp_clk_set_rate(&iep->aclk_info, CLK_MODE_REDUCE);
-
-	return 0;
-}
-
 static int iep2_reset(struct mpp_dev *mpp)
 {
 	struct iep2_dev *iep = to_iep2_dev(mpp);
@@ -888,7 +887,6 @@ static struct mpp_hw_ops iep_v2_hw_ops = {
 	.clk_on = iep2_clk_on,
 	.clk_off = iep2_clk_off,
 	.set_freq = iep2_set_freq,
-	.reduce_freq = iep2_reduce_freq,
 	.reset = iep2_reset,
 };
 

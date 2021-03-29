@@ -30,6 +30,7 @@ struct rkisp_isp_params_ops {
 	void (*set_ldchbuf_size)(struct rkisp_isp_params_vdev *params_vdev,
 				 struct rkisp_ldchbuf_size *ldchsize);
 	void (*stream_stop)(struct rkisp_isp_params_vdev *params_vdev);
+	void (*fop_release)(struct rkisp_isp_params_vdev *params_vdev);
 };
 
 /*
@@ -71,9 +72,12 @@ struct rkisp_isp_params_vdev {
 
 	struct isp2x_hdrtmo_cfg last_hdrtmo;
 	struct isp2x_hdrmge_cfg last_hdrmge;
+	struct isp21_drc_cfg last_hdrdrc;
 	struct isp2x_hdrtmo_cfg cur_hdrtmo;
 	struct isp2x_hdrmge_cfg cur_hdrmge;
+	struct isp21_drc_cfg cur_hdrdrc;
 	struct isp2x_lsc_cfg cur_lsccfg;
+	struct sensor_exposure_cfg exposure;
 };
 
 /* config params before ISP streaming */

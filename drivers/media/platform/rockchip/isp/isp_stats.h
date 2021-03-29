@@ -68,6 +68,9 @@ struct rkisp_isp_stats_vdev {
 	bool rdbk_mode;
 	u32 isp_rdbk;
 	u32 isp3a_rdbk;
+
+	struct rkisp_dummy_buffer tmp_statsbuf;
+	struct rkisp_buffer *cur_buf;
 };
 
 void rkisp_stats_rdbk_enable(struct rkisp_isp_stats_vdev *stats_vdev, bool en);

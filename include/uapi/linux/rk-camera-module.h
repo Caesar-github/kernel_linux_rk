@@ -9,15 +9,39 @@
 
 #include <linux/types.h>
 
-#define RKMODULE_API_VERSION		KERNEL_VERSION(0, 1, 0x1)
+#define RKMODULE_API_VERSION		KERNEL_VERSION(0, 1, 0x2)
+
+/* using for rv1109 and rv1126 */
+#define RKMODULE_EXTEND_LINE		24
 
 #define RKMODULE_NAME_LEN		32
 #define RKMODULE_LSCDATA_LEN		441
+
+#define RKMODULE_MAX_VC_CH		4
 
 #define RKMODULE_CAMERA_MODULE_INDEX	"rockchip,camera-module-index"
 #define RKMODULE_CAMERA_MODULE_FACING	"rockchip,camera-module-facing"
 #define RKMODULE_CAMERA_MODULE_NAME	"rockchip,camera-module-name"
 #define RKMODULE_CAMERA_LENS_NAME	"rockchip,camera-module-lens-name"
+
+/* BT.656 & BT.1120 multi channel
+ * On which channels it can send video data
+ * related with struct rkmodule_bt656_mbus_info
+ */
+#define RKMODULE_CAMERA_BT656_ID_EN_BITS_1		(0x1)
+#define RKMODULE_CAMERA_BT656_ID_EN_BITS_2		(0x3)
+#define RKMODULE_CAMERA_BT656_ID_EN_BITS_3		(0x7)
+#define RKMODULE_CAMERA_BT656_ID_EN_BITS_4		(0xf)
+#define RKMODULE_CAMERA_BT656_PARSE_ID_LSB		BIT(0)
+#define RKMODULE_CAMERA_BT656_PARSE_ID_MSB		BIT(1)
+#define RKMODULE_CAMERA_BT656_CHANNEL_0			BIT(2)
+#define RKMODULE_CAMERA_BT656_CHANNEL_1			BIT(3)
+#define RKMODULE_CAMERA_BT656_CHANNEL_2			BIT(4)
+#define RKMODULE_CAMERA_BT656_CHANNEL_3			BIT(5)
+#define RKMODULE_CAMERA_BT656_CHANNELS			(RKMODULE_CAMERA_BT656_CHANNEL_0 | \
+							 RKMODULE_CAMERA_BT656_CHANNEL_1 | \
+							 RKMODULE_CAMERA_BT656_CHANNEL_2 | \
+							 RKMODULE_CAMERA_BT656_CHANNEL_3)
 
 #define RKMODULE_GET_MODULE_INFO	\
 	_IOR('V', BASE_VIDIOC_PRIVATE + 0, struct rkmodule_inf)
@@ -55,6 +79,23 @@
 #define RKMODULE_GET_BT656_INTF_TYPE	\
 	_IOR('V', BASE_VIDIOC_PRIVATE + 11, __u32)
 
+#define RKMODULE_GET_VC_FMT_INFO \
+    _IOR('V', BASE_VIDIOC_PRIVATE + 12, struct rkmodule_vc_fmt_info)
+
+#define RKMODULE_GET_VC_HOTPLUG_INFO \
+    _IOR('V', BASE_VIDIOC_PRIVATE + 13, struct rkmodule_vc_hotplug_info)
+
+#define RKMODULE_GET_START_STREAM_SEQ	\
+	_IOR('V', BASE_VIDIOC_PRIVATE + 14, __u32)
+
+#define RKMODULE_GET_VICAP_RST_INFO	\
+	_IOR('V', BASE_VIDIOC_PRIVATE + 15, struct rkmodule_vicap_reset_info)
+
+#define RKMODULE_SET_VICAP_RST_INFO	\
+	_IOR('V', BASE_VIDIOC_PRIVATE + 16, struct rkmodule_vicap_reset_info)
+
+#define RKMODULE_GET_BT656_MBUS_INFO	\
+	_IOR('V', BASE_VIDIOC_PRIVATE + 17, struct rkmodule_bt656_mbus_info)
 /**
  * struct rkmodule_base_inf - module base information
  *
@@ -324,5 +365,59 @@ enum rkmodule_bt656_intf_type {
 	BT656_STD_RAW = 0,
 	BT656_SONY_RAW,
 };
+
+/**
+ * struct rkmodule_vc_fmt_info - virtual channels fmt info
+ *
+ */
+struct rkmodule_vc_fmt_info {
+	__u32 width[RKMODULE_MAX_VC_CH];
+	__u32 height[RKMODULE_MAX_VC_CH];
+	__u32 fps[RKMODULE_MAX_VC_CH];
+} __attribute__ ((packed));
+
+/**
+ * struct rkmodule_vc_hotplug_info - virtual channels hotplug status info
+ * detect_status: hotplug status
+ *     bit 0~3 means channels id, value : 0 -> plug out, 1 -> plug in.
+ */
+struct rkmodule_vc_hotplug_info {
+	__u8 detect_status;
+} __attribute__ ((packed));
+
+
+/* sensor start stream sequence
+ * RKMODULE_START_STREAM_DEFAULT: by default
+ * RKMODULE_START_STREAM_BEHIND : sensor start stream should be behind the controller
+ * RKMODULE_START_STREAM_FRONT  : sensor start stream should be in front of the controller
+ */
+enum rkmodule_start_stream_seq {
+	RKMODULE_START_STREAM_DEFAULT = 0,
+	RKMODULE_START_STREAM_BEHIND,
+	RKMODULE_START_STREAM_FRONT,
+};
+
+/*
+ * the causation to do cif reset work
+ */
+enum rkmodule_reset_src {
+	RKCIF_RESET_SRC_NON = 0x0,
+	RKCIF_RESET_SRC_ERR_CSI2,
+	RKCIF_RESET_SRC_ERR_LVDS,
+	RKICF_RESET_SRC_ERR_CUTOFF,
+	RKCIF_RESET_SRC_ERR_HOTPLUG,
+	RKCIF_RESET_SRC_ERR_APP,
+};
+
+struct rkmodule_vicap_reset_info {
+	__u32 is_reset;
+	enum rkmodule_reset_src src;
+} __attribute__ ((packed));
+
+struct rkmodule_bt656_mbus_info {
+	__u32 flags;
+	__u32 id_en_bits;
+} __attribute__ ((packed));
+
 
 #endif /* _UAPI_RKMODULE_CAMERA_H */

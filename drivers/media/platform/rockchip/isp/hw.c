@@ -15,6 +15,8 @@
 #include <linux/pinctrl/consumer.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
+#include <media/videobuf2-dma-contig.h>
+#include <media/videobuf2-dma-sg.h>
 
 #include "common.h"
 #include "dev.h"
@@ -82,7 +84,7 @@ static void default_sw_reg_flag(struct rkisp_device *dev)
 	u32 i, *flag;
 
 	for (i = 0; i < ARRAY_SIZE(reg); i++) {
-		flag = dev->sw_base_addr + reg[i] + ISP_SW_REG_SIZE;
+		flag = dev->sw_base_addr + reg[i] + RKISP_ISP_SW_REG_SIZE;
 		*flag = SW_REG_CACHE;
 	}
 }
@@ -348,6 +350,9 @@ static const struct isp_clk_info rk3568_isp_clk_rate[] = {
 
 static const struct isp_clk_info rv1126_isp_clk_rate[] = {
 	{
+		.clk_rate = 20,
+		.refer_data = 0,
+	}, {
 		.clk_rate = 300,
 		.refer_data = 1920, //width
 	}, {
@@ -563,7 +568,10 @@ static void isp_config_clk(struct rkisp_hw_dev *dev, int on)
 		      CLK_CTRL_MI_Y12 | CLK_CTRL_MI_SP |
 		      CLK_CTRL_MI_RAW0 | CLK_CTRL_MI_RAW1 |
 		      CLK_CTRL_MI_READ | CLK_CTRL_MI_RAWRD |
-		      CLK_CTRL_ISP_3A | CLK_CTRL_ISP_RAW;
+		      CLK_CTRL_ISP_RAW;
+
+		if (dev->isp_ver == ISP_V20 && on)
+			val |= CLK_CTRL_ISP_3A;
 		writel(val, dev->base_addr + CTRL_VI_ISP_CLK_CTRL);
 	}
 }
@@ -596,6 +604,8 @@ static int enable_sys_clk(struct rkisp_hw_dev *dev)
 		}
 	}
 
+	rkisp_set_clk_rate(dev->clks[0],
+			   dev->clk_rate_tbl[0].clk_rate * 1000000UL);
 	rkisp_soft_reset(dev);
 	isp_config_clk(dev, true);
 
@@ -637,7 +647,12 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	hw_dev->dev = dev;
 	hw_dev->is_thunderboot = IS_ENABLED(CONFIG_VIDEO_ROCKCHIP_THUNDER_BOOT_ISP);
 	dev_info(dev, "is_thunderboot: %d\n", hw_dev->is_thunderboot);
-
+	hw_dev->max_in.w = 0;
+	hw_dev->max_in.h = 0;
+	hw_dev->max_in.fps = 0;
+	of_property_read_u32_array(node, "max-input", &hw_dev->max_in.w, 3);
+	dev_info(dev, "max input:%dx%d@%dfps\n",
+		 hw_dev->max_in.w, hw_dev->max_in.h, hw_dev->max_in.fps);
 	hw_dev->grf = syscon_regmap_lookup_by_phandle(node, "rockchip,grf");
 	if (IS_ERR(hw_dev->grf))
 		dev_warn(dev, "Missing rockchip,grf property\n");
@@ -686,6 +701,12 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 		hw_dev->reset = NULL;
 	}
 
+	ret = of_property_read_u64(node, "rockchip,iq-feature", &hw_dev->iq_feature);
+	if (!ret)
+		hw_dev->is_feature_on = true;
+	else
+		hw_dev->is_feature_on = false;
+
 	hw_dev->dev_num = 0;
 	hw_dev->cur_dev_id = 0;
 	hw_dev->mipi_dev_id = 0;
@@ -695,14 +716,27 @@ static int rkisp_hw_probe(struct platform_device *pdev)
 	atomic_set(&hw_dev->refcnt, 0);
 	spin_lock_init(&hw_dev->buf_lock);
 	INIT_LIST_HEAD(&hw_dev->list);
+	INIT_LIST_HEAD(&hw_dev->rpt_list);
 	hw_dev->is_idle = true;
 	hw_dev->is_single = true;
 	hw_dev->is_mi_update = false;
-	if (!is_iommu_enable(dev)) {
-		ret = of_reserved_mem_device_init(dev);
-		if (ret)
-			dev_err(dev, "No reserved memory region\n");
+	hw_dev->is_dma_contig = true;
+	hw_dev->is_buf_init = false;
+	hw_dev->is_shutdown = false;
+	hw_dev->is_mmu = is_iommu_enable(dev);
+	ret = of_reserved_mem_device_init(dev);
+	if (ret) {
+		if (!hw_dev->is_mmu)
+			dev_warn(dev, "No reserved memory region. default cma area!\n");
+		else
+			hw_dev->is_dma_contig = false;
 	}
+	if (!hw_dev->is_mmu)
+		hw_dev->mem_ops = &vb2_dma_contig_memops;
+	else if (!hw_dev->is_dma_contig)
+		hw_dev->mem_ops = &vb2_dma_sg_memops;
+	else
+		hw_dev->mem_ops = &vb2_rdma_sg_memops;
 
 	pm_runtime_enable(dev);
 
@@ -718,6 +752,16 @@ static int rkisp_hw_remove(struct platform_device *pdev)
 	pm_runtime_disable(&pdev->dev);
 	mutex_destroy(&hw_dev->dev_lock);
 	return 0;
+}
+
+static void rkisp_hw_shutdown(struct platform_device *pdev)
+{
+	struct rkisp_hw_dev *hw_dev = platform_get_drvdata(pdev);
+
+	hw_dev->is_shutdown = true;
+	if (pm_runtime_active(&pdev->dev))
+		writel(0xffff, hw_dev->base_addr + CIF_IRCL);
+	dev_info(&pdev->dev, "%s\n", __func__);
 }
 
 static int __maybe_unused rkisp_runtime_suspend(struct device *dev)
@@ -743,8 +787,8 @@ static int __maybe_unused rkisp_runtime_resume(struct device *dev)
 	for (i = 0; i < hw_dev->dev_num; i++) {
 		void *buf = hw_dev->isp[i]->sw_base_addr;
 
-		memset(buf, 0, ISP_SW_MAX_SIZE);
-		memcpy_fromio(buf, base, ISP_SW_REG_SIZE);
+		memset(buf, 0, RKISP_ISP_SW_MAX_SIZE);
+		memcpy_fromio(buf, base, RKISP_ISP_SW_REG_SIZE);
 		default_sw_reg_flag(hw_dev->isp[i]);
 	}
 	return 0;
@@ -765,6 +809,7 @@ static struct platform_driver rkisp_hw_drv = {
 	},
 	.probe = rkisp_hw_probe,
 	.remove = rkisp_hw_remove,
+	.shutdown = rkisp_hw_shutdown,
 };
 
 #if IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISP) && IS_BUILTIN(CONFIG_VIDEO_ROCKCHIP_ISPP)

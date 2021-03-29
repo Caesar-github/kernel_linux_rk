@@ -570,6 +570,9 @@ struct rga2_mmu_buf_t {
     unsigned int *buf_virtual;
 
     struct page **pages;
+
+    u8 buf_order;
+    u8 pages_order;
 };
 
 enum
@@ -685,18 +688,25 @@ struct rga2_reg {
 	uint32_t  sys_reg[8];
 	uint32_t  cmd_reg[32];
 
-	uint32_t *MMU_base;
+	uint32_t *MMU_src0_base;
+	uint32_t *MMU_src1_base;
+	uint32_t *MMU_dst_base;
+	uint32_t MMU_src0_count;
+	uint32_t MMU_src1_count;
+	uint32_t MMU_dst_count;
+
 	uint32_t MMU_len;
-	uint32_t MMU_count;
 	bool MMU_map;
 
 	struct sg_table *sg_src0;
 	struct sg_table *sg_src1;
 	struct sg_table *sg_dst;
+	struct sg_table *sg_els;
 
 	struct dma_buf_attachment *attach_src0;
 	struct dma_buf_attachment *attach_src1;
 	struct dma_buf_attachment *attach_dst;
+	struct dma_buf_attachment *attach_els;
 };
 
 struct rga2_service_info {

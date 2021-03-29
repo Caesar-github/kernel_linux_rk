@@ -434,6 +434,7 @@ static int vepu_control(struct mpp_session *session, struct mpp_request *req)
 		priv = session->priv;
 
 		cnt = req->size / sizeof(elem);
+		cnt = (cnt > ENC_INFO_BUTT) ? ENC_INFO_BUTT : cnt;
 		mpp_debug(DEBUG_IOCTL, "codec info count %d\n", cnt);
 		for (i = 0; i < cnt; i++) {
 			if (copy_from_user(&elem, req->data + i * sizeof(elem), sizeof(elem))) {
@@ -441,7 +442,7 @@ static int vepu_control(struct mpp_session *session, struct mpp_request *req)
 				continue;
 			}
 			if (elem.type > ENC_INFO_BASE && elem.type < ENC_INFO_BUTT &&
-			    elem.flag > ENC_INFO_FLAG_NULL && elem.flag < ENC_INFO_FLAG_BUTT) {
+			    elem.flag > CODEC_INFO_FLAG_NULL && elem.flag < CODEC_INFO_FLAG_BUTT) {
 				elem.type = array_index_nospec(elem.type, ENC_INFO_BUTT);
 				priv->codec_info[elem.type].flag = elem.flag;
 				priv->codec_info[elem.type].val = elem.data;
@@ -527,11 +528,11 @@ static int vepu_dump_session(struct mpp_session *session, struct seq_file *seq)
 
 		if (!flag)
 			continue;
-		if (flag == ENC_INFO_FLAG_NUMBER) {
+		if (flag == CODEC_INFO_FLAG_NUMBER) {
 			u32 data = priv->codec_info[i].val;
 
 			seq_printf(seq, "%8d|", data);
-		} else if (flag == ENC_INFO_FLAG_STRING) {
+		} else if (flag == CODEC_INFO_FLAG_STRING) {
 			const char *name = (const char *)&priv->codec_info[i].val;
 
 			seq_printf(seq, "%8s|", name);

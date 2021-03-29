@@ -224,6 +224,32 @@ u32 rkcif_read_grf_reg(struct rkcif_device *dev, enum cif_reg_index index)
 	return val;
 }
 
+void rkcif_enable_dvp_clk_dual_edge(struct rkcif_device *dev, bool on)
+{
+	struct rkcif_hw *cif_hw = dev->hw_dev;
+	u32 val = 0x0;
+
+	if (!IS_ERR(cif_hw->grf)) {
+
+		if (dev->chip_id == CHIP_RK3568_CIF) {
+			if (on)
+				val = RK3568_CIF_PCLK_DUAL_EDGE;
+			else
+				val = RK3568_CIF_PCLK_SINGLE_EDGE;
+			rkcif_write_grf_reg(dev, CIF_REG_GRF_CIFIO_CON1, val);
+		} else if (dev->chip_id == CHIP_RV1126_CIF) {
+			if (on)
+				val = CIF_SAMPLING_EDGE_DOUBLE;
+			else
+				val = CIF_SAMPLING_EDGE_SINGLE;
+			rkcif_write_grf_reg(dev, CIF_REG_GRF_CIFIO_CON, val);
+		}
+	}
+
+	v4l2_info(&dev->v4l2_dev,
+		  "set dual edge mode(%s,0x%x)!!!\n", on ? "on" : "off", val);
+}
+
 void rkcif_config_dvp_clk_sampling_edge(struct rkcif_device *dev,
 					enum rkcif_clk_edge edge)
 {
@@ -246,24 +272,6 @@ void rkcif_config_dvp_clk_sampling_edge(struct rkcif_device *dev,
 		}
 		rkcif_write_grf_reg(dev, CIF_REG_GRF_CIFIO_CON, val);
 	}
-}
-
-static bool is_iommu_enable(struct device *dev)
-{
-	struct device_node *iommu;
-
-	iommu = of_parse_phandle(dev->of_node, "iommus", 0);
-	if (!iommu) {
-		dev_info(dev, "no iommu attached, using non-iommu buffers\n");
-		return false;
-	} else if (!of_device_is_available(iommu)) {
-		dev_info(dev, "iommu is disabled, using non-iommu buffers\n");
-		of_node_put(iommu);
-		return false;
-	}
-	of_node_put(iommu);
-
-	return true;
 }
 
 /**************************** pipeline operations *****************************/
@@ -449,10 +457,15 @@ static int rkcif_create_links(struct rkcif_device *dev)
 	unsigned int s, pad, id, stream_num = 0;
 	bool mipi_lvds_linked = false;
 
-	if (dev->inf_id == RKCIF_MIPI_LVDS)
+
+	if (dev->chip_id < CHIP_RV1126_CIF) {
+		if (dev->inf_id == RKCIF_MIPI_LVDS)
+			stream_num = RKCIF_MAX_STREAM_MIPI;
+		else
+			stream_num = RKCIF_SINGLE_STREAM;
+	} else {
 		stream_num = RKCIF_MAX_STREAM_MIPI;
-	else
-		stream_num = RKCIF_SINGLE_STREAM;
+	}
 
 	/* sensor links(or mipi-phy) */
 	for (s = 0; s < dev->num_sensors; ++s) {
@@ -488,9 +501,7 @@ static int rkcif_create_links(struct rkcif_device *dev)
 
 				if ((linked_sensor.mbus.type == V4L2_MBUS_BT656 ||
 				     linked_sensor.mbus.type == V4L2_MBUS_PARALLEL) &&
-				    (dev->chip_id == CHIP_RK1808_CIF ||
-				     dev->chip_id == CHIP_RV1126_CIF ||
-				     dev->chip_id == CHIP_RK3568_CIF)) {
+				    (dev->chip_id == CHIP_RK1808_CIF)) {
 					source_entity = &linked_sensor.sd->entity;
 					sink_entity = &dev->stream[RKCIF_STREAM_CIF].vnode.vdev.entity;
 
@@ -503,6 +514,23 @@ static int rkcif_create_links(struct rkcif_device *dev)
 						dev_err(dev->dev, "failed to create link for %s\n",
 							linked_sensor.sd->name);
 					break;
+				}
+
+				if ((linked_sensor.mbus.type == V4L2_MBUS_BT656 ||
+				     linked_sensor.mbus.type == V4L2_MBUS_PARALLEL) &&
+				    (dev->chip_id >= CHIP_RV1126_CIF)) {
+					source_entity = &linked_sensor.sd->entity;
+					sink_entity = &dev->stream[pad].vnode.vdev.entity;
+
+					ret = media_create_pad_link(source_entity,
+								    pad,
+								    sink_entity,
+								    0,
+								    MEDIA_LNK_FL_ENABLED);
+					if (ret)
+						dev_err(dev->dev, "failed to create link for %s pad[%d]\n",
+							linked_sensor.sd->name, pad);
+					continue;
 				}
 
 				for (id = 0; id < stream_num; id++) {
@@ -560,6 +588,16 @@ static int _set_pipeline_default_fmt(struct rkcif_device *dev)
 	return 0;
 }
 
+static void subdev_itf_register_work(struct work_struct *work)
+{
+	struct rkcif_device *dev = container_of(work,
+						struct rkcif_device,
+						async_register_work);
+
+	if (dev->chip_id >= CHIP_RK1808_CIF)
+		platform_driver_register(&rkcif_subdev_driver);
+}
+
 static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
 {
 	struct rkcif_device *dev;
@@ -579,6 +617,17 @@ static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
 			}
 			break;
 		}
+
+		if (sensor->mbus.type == V4L2_MBUS_PARALLEL ||
+		    sensor->mbus.type == V4L2_MBUS_BT656) {
+			ret = rkcif_register_dvp_sof_subdev(dev);
+			if (ret < 0) {
+				v4l2_err(&dev->v4l2_dev,
+					 "Err: register dvp sof subdev failed!!!\n");
+				goto notifier_end;
+			}
+			break;
+		}
 	}
 
 	ret = rkcif_create_links(dev);
@@ -592,11 +641,22 @@ static int subdev_notifier_complete(struct v4l2_async_notifier *notifier)
 	ret = _set_pipeline_default_fmt(dev);
 	if (ret < 0)
 		goto unregister_lvds;
+
+	INIT_WORK(&dev->async_register_work, subdev_itf_register_work);
+	if (schedule_work(&dev->async_register_work))
+		v4l2_info(&dev->v4l2_dev,
+			 "async register subdev itf successfully\n");
+	else
+		v4l2_info(&dev->v4l2_dev,
+			 "async register subdev itf failed\n");
+
 	v4l2_info(&dev->v4l2_dev, "Async subdev notifier completed\n");
+
 	return ret;
 
 unregister_lvds:
 	rkcif_unregister_lvds_subdev(dev);
+	rkcif_unregister_dvp_sof_subdev(dev);
 notifier_end:
 	return ret;
 }
@@ -679,7 +739,9 @@ static int cif_subdev_notifier(struct rkcif_device *cif_dev)
 
 	ntf->ops = &subdev_notifier_ops;
 
-	return v4l2_async_notifier_register(&cif_dev->v4l2_dev, ntf);
+	ret = v4l2_async_notifier_register(&cif_dev->v4l2_dev, ntf);
+
+	return ret;
 }
 
 /***************************** platform deive *******************************/
@@ -688,14 +750,19 @@ static int rkcif_register_platform_subdevs(struct rkcif_device *cif_dev)
 {
 	int stream_num = 0, ret;
 
-	if (cif_dev->inf_id == RKCIF_MIPI_LVDS) {
-		stream_num = RKCIF_MAX_STREAM_MIPI;
-		ret = rkcif_register_stream_vdevs(cif_dev, stream_num,
-						  true);
+	if (cif_dev->chip_id < CHIP_RV1126_CIF) {
+		if (cif_dev->inf_id == RKCIF_MIPI_LVDS) {
+			stream_num = RKCIF_MAX_STREAM_MIPI;
+			ret = rkcif_register_stream_vdevs(cif_dev, stream_num,
+							  true);
+		} else {
+			stream_num = RKCIF_SINGLE_STREAM;
+			ret = rkcif_register_stream_vdevs(cif_dev, stream_num,
+							  false);
+		}
 	} else {
-		stream_num = RKCIF_SINGLE_STREAM;
-		ret = rkcif_register_stream_vdevs(cif_dev, stream_num,
-						  false);
+		stream_num = RKCIF_MAX_STREAM_MIPI;
+		ret = rkcif_register_stream_vdevs(cif_dev, stream_num, true);
 	}
 
 	if (ret < 0) {
@@ -814,6 +881,94 @@ static int rkcif_detach_hw(struct rkcif_device *cif_dev)
 	return 0;
 }
 
+static char *rkcif_get_monitor_mode(enum rkcif_monitor_mode mode)
+{
+	switch (mode) {
+	case RKCIF_MONITOR_MODE_IDLE:
+		return "idle";
+	case RKCIF_MONITOR_MODE_CONTINUE:
+		return "continue";
+	case RKCIF_MONITOR_MODE_TRIGGER:
+		return "trigger";
+	case RKCIF_MONITOR_MODE_HOTPLUG:
+		return "hotplug";
+	default:
+		return "unknown";
+	}
+}
+
+static void rkcif_init_reset_monitor(struct rkcif_device *dev)
+{
+	struct device_node *node = dev->dev->of_node;
+	struct rkcif_timer *timer = &dev->reset_watchdog_timer;
+	struct notifier_block *notifier = &dev->reset_notifier;
+	u32 para[8];
+	int i;
+
+	if (!of_property_read_u32_array(node,
+					OF_CIF_MONITOR_PARA,
+					para,
+					CIF_MONITOR_PARA_NUM)) {
+		for (i = 0; i < CIF_MONITOR_PARA_NUM; i++) {
+			if (i == 0) {
+				timer->monitor_mode = para[0];
+				v4l2_info(&dev->v4l2_dev,
+					  "%s: timer monitor mode:%s\n",
+					  __func__, rkcif_get_monitor_mode(timer->monitor_mode));
+			}
+
+			if (i == 1) {
+				timer->triggered_frame_num = para[1];
+				v4l2_info(&dev->v4l2_dev,
+					  "timer triggered frm num:%d\n",
+					  timer->triggered_frame_num);
+			}
+
+			if (i == 2) {
+				timer->frm_num_of_monitor_cycle = para[2];
+				v4l2_info(&dev->v4l2_dev,
+					  "timer frm num of monitor cycle:%d\n",
+					  timer->frm_num_of_monitor_cycle);
+			}
+
+			if (i == 3) {
+				timer->err_time_interval = para[3];
+				v4l2_info(&dev->v4l2_dev,
+					  "timer err time for keeping:%d ms\n",
+					  timer->err_time_interval);
+			}
+
+			if (i == 4) {
+				timer->csi2_err_ref_cnt = para[4];
+				v4l2_info(&dev->v4l2_dev,
+					  "timer csi2 err ref val for resetting:%d\n",
+					  timer->csi2_err_ref_cnt);
+			}
+		}
+	} else {
+		timer->monitor_mode = RKCIF_MONITOR_MODE_IDLE;
+		timer->err_time_interval = 0xffffffff;
+		timer->frm_num_of_monitor_cycle = 0xffffffff;
+		timer->triggered_frame_num =  0xffffffff;
+		timer->csi2_err_ref_cnt = 0xffffffff;
+	}
+
+	timer->is_running = false;
+	timer->is_triggered = false;
+	timer->is_buf_stop_update = false;
+	timer->csi2_err_cnt_even = 0;
+	timer->csi2_err_cnt_odd = 0;
+	timer->csi2_err_fs_fe_cnt = 0;
+	timer->csi2_err_fs_fe_detect_cnt = 0;
+
+	timer_setup(&timer->timer, rkcif_reset_watchdog_timer_handler, 0);
+
+	notifier->priority = 1;
+	notifier->notifier_call = rkcif_reset_notifier;
+	rkcif_csi2_register_notifier(notifier);
+
+}
+
 int rkcif_plat_init(struct rkcif_device *cif_dev, struct device_node *node, int inf_id)
 {
 	struct device *dev = cif_dev->dev;
@@ -826,6 +981,7 @@ int rkcif_plat_init(struct rkcif_device *cif_dev, struct device_node *node, int 
 	mutex_init(&cif_dev->stream_lock);
 	spin_lock_init(&cif_dev->hdr_lock);
 	spin_lock_init(&cif_dev->reset_watchdog_timer.timer_lock);
+	spin_lock_init(&cif_dev->reset_watchdog_timer.csi2_err_lock);
 	atomic_set(&cif_dev->pipe.power_cnt, 0);
 	atomic_set(&cif_dev->pipe.stream_cnt, 0);
 	atomic_set(&cif_dev->fh_cnt, 0);
@@ -837,13 +993,21 @@ int rkcif_plat_init(struct rkcif_device *cif_dev, struct device_node *node, int 
 	if (cif_dev->chip_id == CHIP_RV1126_CIF_LITE)
 		cif_dev->isr_hdl = rkcif_irq_lite_handler;
 
-	if (cif_dev->inf_id == RKCIF_MIPI_LVDS) {
+	if (cif_dev->chip_id < CHIP_RV1126_CIF) {
+		if (cif_dev->inf_id == RKCIF_MIPI_LVDS) {
+			rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID0);
+			rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID1);
+			rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID2);
+			rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID3);
+		} else {
+			rkcif_stream_init(cif_dev, RKCIF_STREAM_CIF);
+		}
+	} else {
+		/* for rv1126/rk356x, bt656/bt1120/mipi are multi channels */
 		rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID0);
 		rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID1);
 		rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID2);
 		rkcif_stream_init(cif_dev, RKCIF_STREAM_MIPI_ID3);
-	} else {
-		rkcif_stream_init(cif_dev, RKCIF_STREAM_CIF);
 	}
 
 #if defined(CONFIG_ROCKCHIP_CIF_WORKMODE_PINGPONG)
@@ -903,12 +1067,21 @@ int rkcif_plat_uninit(struct rkcif_device *cif_dev)
 	if (cif_dev->active_sensor->mbus.type == V4L2_MBUS_CCP2)
 		rkcif_unregister_lvds_subdev(cif_dev);
 
+	if (cif_dev->active_sensor->mbus.type == V4L2_MBUS_BT656 ||
+	    cif_dev->active_sensor->mbus.type == V4L2_MBUS_PARALLEL)
+		rkcif_unregister_dvp_sof_subdev(cif_dev);
+
 	media_device_unregister(&cif_dev->media_dev);
 	v4l2_device_unregister(&cif_dev->v4l2_dev);
-	if (cif_dev->inf_id == RKCIF_MIPI_LVDS)
+
+	if (cif_dev->chip_id < CHIP_RV1126_CIF) {
+		if (cif_dev->inf_id == RKCIF_MIPI_LVDS)
+			stream_num = RKCIF_MAX_STREAM_MIPI;
+		else
+			stream_num = RKCIF_SINGLE_STREAM;
+	} else {
 		stream_num = RKCIF_MAX_STREAM_MIPI;
-	else
-		stream_num = RKCIF_SINGLE_STREAM;
+	}
 	rkcif_unregister_stream_vdevs(cif_dev, stream_num);
 
 	return 0;
@@ -941,7 +1114,6 @@ static int rkcif_plat_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	struct rkcif_device *cif_dev;
 	const struct rkcif_match_data *data;
-	bool iommu_en;
 	int ret;
 
 	sprintf(rkcif_version, "v%02x.%02x.%02x",
@@ -968,13 +1140,6 @@ static int rkcif_plat_probe(struct platform_device *pdev)
 
 	rkcif_attach_hw(cif_dev);
 
-	iommu_en = is_iommu_enable(dev);
-	if (!iommu_en) {
-		ret = of_reserved_mem_device_init(dev);
-		if (ret)
-			dev_info(dev, "No reserved memory region assign to CIF\n");
-	}
-
 	ret = rkcif_plat_init(cif_dev, node, data->inf_id);
 	if (ret) {
 		rkcif_detach_hw(cif_dev);
@@ -984,18 +1149,8 @@ static int rkcif_plat_probe(struct platform_device *pdev)
 	if (rkcif_proc_init(cif_dev))
 		dev_warn(dev, "dev:%s create proc failed\n", dev_name(dev));
 
-	cif_dev->reset_notifier.priority = 1;
-	cif_dev->reset_notifier.notifier_call = rkcif_reset_notifier;
-	rkcif_csi2_register_notifier(&cif_dev->reset_notifier);
-#if defined(CONFIG_ROCKCHIP_CIF_RESET_MONITOR_CONTINU)
-	cif_dev->reset_watchdog_timer.reset_src = RKCIF_RESET_SRC_NORMAL;
-#else
-	cif_dev->reset_watchdog_timer.reset_src = RKCIF_RESET_SRC_NON;
-#endif
-	timer_setup(&cif_dev->reset_watchdog_timer.timer,
-		    rkcif_reset_watchdog_timer_handler, 0);
-
-	rkcif_soft_reset(cif_dev, true);
+	rkcif_init_reset_monitor(cif_dev);
+	rkcif_soft_reset(cif_dev, false);
 	pm_runtime_enable(&pdev->dev);
 
 	return 0;
