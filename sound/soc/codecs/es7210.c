@@ -118,7 +118,7 @@ struct es7210_priv {
 		unsigned int tdm_mode;
 		struct delayed_work pcm_pop_work;
 };
-struct snd_soc_component *tron_component1[ADC_DEV_MAXNUM];
+static struct snd_soc_component *tron_component1[ADC_DEV_MAXNUM];
 
 int es7210_init_reg = 0;
 static int es7210_codec_num = 0;
