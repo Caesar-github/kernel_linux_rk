@@ -204,3 +204,9 @@
 &rkispp_mmu {
 	status = "disabled";
 };
+
+&reserved_memory  {
+	linux,cma {
+		size = <0x8000000>;
+	};
+};
