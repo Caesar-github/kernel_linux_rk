@@ -504,7 +504,7 @@ static int lt7911d_open(struct v4l2_subdev *sd, struct v4l2_subdev_fh *fh)
         struct lt7911d *lt7911d = to_lt7911d(sd);
         struct v4l2_mbus_framefmt *try_fmt =
                                 v4l2_subdev_get_try_format(sd, fh->pad, 0);
-        printk("%s\n",__func__);
+        //printk("%s\n",__func__);
         mutex_lock(&lt7911d->mutex);
         /* Initialize try_fmt */
         try_fmt->width = lt7911d->timings.bt.width;
