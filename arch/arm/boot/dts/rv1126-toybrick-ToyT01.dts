@@ -7,7 +7,7 @@
 #include "rv1126-ToyT-v13.dtsi"
 / {
 	model = "Rockchip RV1126 EVB DDR3 V13 Board";
-	compatible = "rockchip,rv1126-evb-ddr3-v13", "rockchip,rv1126";
+	compatible = "rockchip,rv1126-toybrick-ToyT01", "rockchip,rv1126";
 
 	chosen {
 		bootargs = "earlycon=uart8250,mmio32,0xff570000 console=ttyFIQ0 root=PARTUUID=614e0000-0000 rootfstype=ext4 rootwait snd_aloop.index=7";
