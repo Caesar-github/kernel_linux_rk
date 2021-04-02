@@ -378,8 +378,8 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	timings.type = V4L2_DV_BT_656_1120;
 	if (Hactive == 0 || Vactive == 0) {
 		//workaround way to ensure width and height > 1
-		Hactive = 2;
-		Vactive = 2;
+		Hactive = 640;
+		Vactive = 480;
 	}
 	bt->width = Hactive;
 	bt->height = Vactive;
@@ -618,7 +618,7 @@ static int lt7911d_probe(struct i2c_client *client,
 	struct device *dev = &client->dev;
 	struct lt7911d *lt7911d;
 	struct v4l2_subdev *sd;
-        struct v4l2_dv_timings default_timing = V4L2_DV_BT_CEA_1920X1080P60;
+        struct v4l2_dv_timings default_timing = V4L2_DV_BT_DMT_640X480P60;
 	int ret=0;
 
 	dev_info(dev, "driver version: %02x.%02x.%02x\n",
