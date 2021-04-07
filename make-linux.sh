@@ -139,6 +139,7 @@ mkdir -p boot_linux/extlinux
 touch boot_linux/extlinux/extlinux.conf
 case $1 in
 	arm)
+		make_kernel_image ${model_arm[0]}
 		make_toybrick_dtb arm
 		for i in "${model_arm[@]}"; do
 			make_kernel_image $i
@@ -146,6 +147,7 @@ case $1 in
 		done
 		;;
 	arm64)
+		make_kernel_image ${model_arm64[0]}
 		make_toybrick_dtb arm64
 		for i in "${model_arm64[@]}"; do
 			make_kernel_image $i
