@@ -115,6 +115,7 @@ struct rockchip_hdmi {
 	int max_tmdsclk;
 	bool unsupported_yuv_input;
 	bool unsupported_deep_color;
+	bool mode_changed;
 
 	unsigned long bus_format;
 	unsigned long output_bus_format;
@@ -557,7 +558,8 @@ static void dw_hdmi_rockchip_encoder_disable(struct drm_encoder *encoder)
 	struct drm_crtc *crtc = encoder->crtc;
 	struct rockchip_crtc_state *s = to_rockchip_crtc_state(crtc->state);
 
-	s->output_if &= ~VOP_OUTPUT_IF_HDMI0;
+	if (!hdmi->mode_changed)
+		s->output_if &= ~VOP_OUTPUT_IF_HDMI0;
 	/*
 	 * when plug out hdmi it will be switch cvbs and then phy bus width
 	 * must be set as 8
@@ -855,6 +857,8 @@ dw_hdmi_rockchip_encoder_atomic_check(struct drm_encoder *encoder,
 	s->output_mode = output_mode;
 	s->bus_format = bus_format;
 	hdmi->bus_format = s->bus_format;
+
+	hdmi->mode_changed = crtc_state->mode_changed;
 
 	if (hdmi->enc_out_encoding == V4L2_YCBCR_ENC_BT2020)
 		s->color_space = V4L2_COLORSPACE_BT2020;
