@@ -14,15 +14,15 @@ model_arm64=(
 	"TB-RK3399ProXs0 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 0      Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProX1  TX03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProXs1 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568X0     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568Xs0    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568X1     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568Xs1    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"
 	#"TB-RK1808M0     TM01808 arm64 RK1808    0xff550000 rk1808-toybrick-m0            -1     Image.RK1808    RK1808_linux_defconfig"
 	#"TB-RK1808S0     TS01808 arm64 RK1808    0xff550000 rk1808-toybrick-s0            -1     Image.RK1808    RK1808_linux_defconfig"
 	#"TB-RK1808CAM0   TC01808 arm64 RK1808    0xff550000 rk1808-toybrick-cam0          -1     Image.RK1808    RK1808_linux_defconfig"
 	#"TB-RK3568D      TD03568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig"  
 	#"TB-RK3568Ds     TDs3568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig"  
-	#"TB-RK3568X0     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"  
-	#"TB-RK3568Xs0    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"  
-	#"TB-RK3568X1     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"  
-	#"TB-RK3568Xs1    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"  
 	)
 
 model_arm=(
