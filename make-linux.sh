@@ -80,29 +80,29 @@ function make_extlinux_conf()
 	no_sn=${10}
 
 	if [ ${no_sn} -eq 1 ]; then
-		file=boot_linux/extlinux/extlinux.conf
-		cp boot_linux/extlinux/${dtb_name}.dtb  boot_linux/extlinux/toybrick.dtb
-		echo "label rockchip-kernel-4.19" > ${file}
-		echo "	kernel /extlinux/${image}" >> ${file}
-		echo "	fdt /extlinux/toybrick.dtb" >> ${file}
-		echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> ${file}
+		file=extlinux.conf
+		dst_dtb=toybrick.dtb
+		if [ ${index} -ne -1 ]; then
+			src_dtb=${dtb_name}-x${index}.dtb
+		else
+			src_dtb=${dtb_name}.dtb
+		fi
 	else
-		file=boot_linux/extlinux/extlinux.conf.${flag}
-		cp boot_linux/extlinux/${dtb_name}.dtb  boot_linux/extlinux/toybrick.dtb.${flag}
-		echo "label rockchip-kernel-4.19" > ${file}
-		echo "	kernel /extlinux/${image}" >> ${file}
-		echo "	fdt /extlinux/toybrick.dtb.${flag}" >> ${file}
-		echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> ${file}
+		if [ ${index} -ne -1 ]; then
+			file=extlinux.conf.${flag}.${index}
+			dst_dtb=toybrick.dtb.${flag}.${index}
+			src_dtb=${dtb_name}-x${index}.dtb
+		else
+			file=extlinux.conf.${flag}
+			dst_dtb=toybrick.dtb.${flag}
+			src_dtb=${dtb_name}.dtb
+		fi
 	fi
-	
-	if [ ${index} -ne -1 ]; then
-		file=boot_linux/extlinux/extlinux.conf.${flag}.${index}
-		cp boot_linux/extlinux/${dtb_name}-x${index}.dtb  boot_linux/extlinux/toybrick.dtb.${flag}.${index}
-		echo "label rockchip-kernel-4.19" > ${file}
-		echo "	kernel /extlinux/${image}" >> ${file}
-		echo "	fdt /extlinux/toybrick.dtb.${flag}.${index}" >> ${file}
-		echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> ${file}
-	fi
+	cp boot_linux/extlinux/${src_dtb} boot_linux/extlinux/${dst_dtb}
+	echo "label rockchip-kernel-4.19" > boot_linux/extlinux/${file}
+	echo "	kernel /extlinux/${image}" >> boot_linux/extlinux/${file}
+	echo "	fdt /extlinux/${dst_dtb}" >> boot_linux/extlinux/${file}
+	echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/${file}
 }
 
 function make_kernel_image()
