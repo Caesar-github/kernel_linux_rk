@@ -119,7 +119,11 @@ function make_kernel_image()
 
 	if [ "${config}" != "${DEFCONFIG}" ]; then
 		make ARCH=${model_arch} ${config}
-		make ARCH=${model_arch} ${dtb_name}.img -j${CPUs}
+		if [ ${index} -ne -1 ]; then
+			make ARCH=${model_arch} ${dtb_name}-x${index}.img -j${CPUs}
+		else
+			make ARCH=${model_arch} ${dtb_name}.img -j${CPUs}
+		fi
 		cp arch/${model_arch}/boot/`echo ${image} | awk -F'.' '{print $1}'` boot_linux/extlinux/${image} 
 		DEFCONFIG=${config}
 	fi
