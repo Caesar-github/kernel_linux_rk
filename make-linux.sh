@@ -66,6 +66,19 @@ function make_toybrick_dtb()
 	cp ${dts_path}/*toybrick*.dtb boot_linux/extlinux/
 }
 
+function _make_extlinux_conf()
+{
+	file=$1
+	src_dtb=$2
+	dst_dtb=$3
+	image=$4
+	cp boot_linux/extlinux/${src_dtb} boot_linux/extlinux/${dst_dtb}
+	echo "label rockchip-kernel-4.19" > boot_linux/extlinux/${file}
+	echo "	kernel /extlinux/${image}" >> boot_linux/extlinux/${file}
+	echo "	fdt /extlinux/${dst_dtb}" >> boot_linux/extlinux/${file}
+	echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/${file}
+}
+
 function make_extlinux_conf()
 {
 	model=$1
@@ -98,11 +111,16 @@ function make_extlinux_conf()
 			src_dtb=${dtb_name}.dtb
 		fi
 	fi
-	cp boot_linux/extlinux/${src_dtb} boot_linux/extlinux/${dst_dtb}
-	echo "label rockchip-kernel-4.19" > boot_linux/extlinux/${file}
-	echo "	kernel /extlinux/${image}" >> boot_linux/extlinux/${file}
-	echo "	fdt /extlinux/${dst_dtb}" >> boot_linux/extlinux/${file}
-	echo "	append  earlycon=uart8250,mmio32,${uart} root=PARTUUID=614e0000-0000-4b53-8000-1d28000054a9 rw rootwait rootfstype=ext4" >> boot_linux/extlinux/${file}
+	_make_extlinux_conf ${file} ${src_dtb} ${dst_dtb} ${image}
+
+	if [ ${index} -ne -1 ]; then
+		# uboot will load this config to get the index of the mainboard
+		# see arch/arm/include/asm/arch-rockchip/toybrick.h for the detail
+		file=extlinux.conf.${flag}
+		dst_dtb=toybrick.dtb.${flag}
+		src_dtb=${dtb_name}.dtb
+		_make_extlinux_conf ${file} ${src_dtb} ${dst_dtb} ${image}
+	fi
 }
 
 function make_kernel_image()
