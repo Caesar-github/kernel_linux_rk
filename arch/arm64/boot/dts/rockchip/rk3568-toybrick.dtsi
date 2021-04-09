@@ -10,6 +10,8 @@
 #include <dt-bindings/pinctrl/rockchip.h>
 #include "rk3568.dtsi"
 #include "rk3568-evb.dtsi"
+/delete-node/ &adc_keys;
+/delete-node/ &leds;
 
 / {
 	compatible = "rockchip,rk3568-toybrick", "rockchip,rk3568";
@@ -42,6 +44,38 @@
 			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
 			label = "system_work_led3"; // Green LED
 			retain-state-suspended;
+		};
+	};
+
+	adc-keys {
+		compatible = "adc-keys";
+		io-channels = <&saradc 0>;
+		io-channel-names = "buttons";
+		poll-interval = <100>;
+		keyup-threshold-microvolt = <1800000>;
+
+		menu-key {
+		    linux,code = <KEY_MENU>;
+		    label = "menu";
+		    press-threshold-microvolt = <1250000>;
+		};
+
+		mute-key {
+		    linux,code = <KEY_MUTE>;
+		    label = "mute";
+		    press-threshold-microvolt = <850000>;
+		};
+
+		vol-down-key {
+		    linux,code = <KEY_VOLUMEDOWN>;
+		    label = "volume down";
+		    press-threshold-microvolt = <400000>;
+		};
+
+		vol-up-key {
+		    linux,code = <KEY_VOLUMEUP>;
+		    label = "volume up";
+		    press-threshold-microvolt = <20000>;
 		};
 	};
 
