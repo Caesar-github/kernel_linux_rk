@@ -16,15 +16,9 @@
 
 	leds {
 		compatible = "gpio-leds";
-		/**
-		 *led state:
-		 * bule:  system_work_led1
-		 * red:   system_work_led2
-		 * green: system_work_led3
-		 */
 		led@1 {
 			gpios = <&gpio0 RK_PC0 GPIO_ACTIVE_LOW>;
-			label = "system_work_led1"; 
+			label = "blue"; 
 			default-state = "on";
 			linux,default-trigger = "default-on";
 			pinctrl-names = "default";
