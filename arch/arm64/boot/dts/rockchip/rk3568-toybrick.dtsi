@@ -21,6 +21,30 @@
 		pinctrl-0 = <&hp_det>;
 	};
 
+    leds: gpio-leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 =<&leds_gpio>;
+
+		led@1 {
+			gpios = <&gpio4 RK_PC2 GPIO_ACTIVE_HIGH>;
+			label = "system_work_led1"; // Blue LED
+			retain-state-suspended;
+		};
+
+		led@2 {
+			gpios = <&gpio4 RK_PC3 GPIO_ACTIVE_HIGH>;
+			label = "system_work_led2"; // Red LED
+			retain-state-suspended;
+		};
+
+		led@3 {
+			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
+			label = "system_work_led3"; // Green LED
+			retain-state-suspended;
+		};
+	};
+
 	rt5672-sound {
 		compatible = "rockchip-rt5670";
 		status = "okay";
@@ -330,6 +354,13 @@
 		hp_det: hp-det {
 			rockchip,pins = <3 RK_PC2 RK_FUNC_GPIO &pcfg_pull_down>;
 		};
+	};
+
+	leds_gpio: leds-gpio {
+		rockchip,pins =
+			<4 RK_PC2 RK_FUNC_GPIO &pcfg_pull_up>,
+			<4 RK_PC3 RK_FUNC_GPIO &pcfg_pull_up>,
+			<4 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
 	};
 
 	mxc6655xa {
