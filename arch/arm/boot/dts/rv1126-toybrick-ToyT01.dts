@@ -138,6 +138,32 @@
 		clock-output-names = "CLK_CAMERA_27MHZ";
 		#clock-cells = <0>;
 	};
+
+	leds {
+		compatible = "gpio-leds";
+		pinctrl-names = "default";
+		pinctrl-0 = <&work_led>;
+		/**
+		 *led state:
+		 * bule:  system_work_led1
+		 * red:   system_work_led2
+		 * green: system_work_led3
+		 */
+		led@1 {
+			gpios = <&gpio0 RK_PC3 GPIO_ACTIVE_HIGH>;
+			label = "system_work_led1";  // Blue led
+			default-state = "on";
+			linux,default-trigger = "default-on";
+		};
+
+		led@2 {
+			gpios = <&gpio0 RK_PC2 GPIO_ACTIVE_HIGH>;
+			label = "system_work_led2";  // Red led
+			default-state = "on";
+			linux,default-trigger = "default-on";
+		};
+	};
+
 };
 
 &pmu_io_domains {
@@ -175,6 +201,16 @@
 			rockchip,pins = <1 RK_PC5 RK_FUNC_GPIO &pcfg_pull_up>;
 		};
 	};
+
+	leds {
+
+		work_led: work-led {
+			rockchip,pins =
+				<0 RK_PC3 RK_FUNC_GPIO &pcfg_pull_none>,
+				<0 RK_PC2 RK_FUNC_GPIO &pcfg_pull_none>;
+		};
+	};
+
 };
 
 &rkcif_mipi_lvds_sditf {
