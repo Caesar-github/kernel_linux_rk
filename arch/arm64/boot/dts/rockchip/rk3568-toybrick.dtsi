@@ -30,19 +30,19 @@
 
 		led@1 {
 			gpios = <&gpio4 RK_PC2 GPIO_ACTIVE_HIGH>;
-			label = "system_work_led1"; // Blue LED
+			label = "blue"; // Blue LED
 			retain-state-suspended;
 		};
 
 		led@2 {
 			gpios = <&gpio4 RK_PC3 GPIO_ACTIVE_HIGH>;
-			label = "system_work_led2"; // Red LED
+			label = "red"; // Red LED
 			retain-state-suspended;
 		};
 
 		led@3 {
 			gpios = <&gpio4 RK_PC5 GPIO_ACTIVE_HIGH>;
-			label = "system_work_led3"; // Green LED
+			label = "green"; // Green LED
 			retain-state-suspended;
 		};
 	};
