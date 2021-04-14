@@ -164,6 +164,24 @@
 	};
 };
 
+&rk809_sound {
+	status = "disabled";
+    compatible = "simple-audio-card";
+    simple-audio-card,format = "i2s";
+    simple-audio-card,name = "rockchip,rk809-codec";
+    simple-audio-card,mclk-fs = <256>;
+
+    simple-audio-card,cpu {
+        sound-dai = <&i2s1_8ch>;
+    };
+    simple-audio-card,codec {
+        sound-dai = <&rk809_codec>;
+    };
+    simple-audio-card,codec {
+        sound-dai = <&es7210>;
+    };
+};
+
 &combphy0_us {
 	status = "okay";
 };
@@ -281,10 +299,10 @@
 &i2c3 {
 	status = "okay";
 	rt5670: rt5670@1c {
+	    status = "okay";
 		#sound-dai-cell = <0>;
 		compatible = "realtek,rt5670";
 		reg = <0x1c>;
-		status = "disabled";
 	};
 
     es7210: es7210@40 {
