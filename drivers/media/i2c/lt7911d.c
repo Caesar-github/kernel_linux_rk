@@ -371,18 +371,20 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	}
 
 	/* handle width and height change event */
-	if (lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
+	if ((BKD2_17_REG&0x40) == 0 || lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
 	struct v4l2_dv_timings timings;
 	struct v4l2_bt_timings *bt = &timings.bt;
 	memset(&timings, 0, sizeof(struct v4l2_dv_timings));
 	timings.type = V4L2_DV_BT_656_1120;
-	if (Hactive == 0 || Vactive == 0) {
+	if (BKD2_17_REG&0x40 == 0 || Hactive == 0 || Vactive == 0) {
 		//workaround way to ensure width and height > 1
 		Hactive = 640;
 		Vactive = 480;
 	}
 	bt->width = Hactive;
 	bt->height = Vactive;
+	timings.bt.height = Vactive;
+	timings.bt.width = Hactive;
 	printk("current=%d:%d, new = %d:%d\n", lt7911d->timings.bt.width,
 	lt7911d->timings.bt.height, bt->width, bt->height);
 	lt7911d_s_dv_timings(sd, &timings);
