@@ -81,7 +81,7 @@
 
 	rt5672-sound {
 		compatible = "rockchip-rt5670";
-		status = "okay";
+		status = "disabled";
 		dais {
 			dai0 {
 				audio-codec = <&rt5670>;
@@ -162,24 +162,71 @@
 		regulator-max-microvolt = <3300000>;
 		vin-supply = <&vcc5v0_sys>;
 	};
+
+	rk809_sound_micarray: rk809-sound-micarray {
+		status = "okay";
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,name = "rockchip,rk809-codec";
+		simple-audio-card,mclk-fs = <256>;
+
+		simple-audio-card,dai-link@0 {
+			format = "i2s";
+			cpu {
+				sound-dai = <&i2s1_8ch>;
+			};
+			codec {
+				sound-dai = <&rk809_codec 0>;
+			};
+		};
+		simple-audio-card,dai-link@1 {
+			format = "i2s";
+			cpu {
+				sound-dai = <&i2s1_8ch>;
+			};
+			codec {
+				sound-dai = <&es7210>;
+			};
+		};
+	};
+};
+
+&i2s1_8ch {
+	status = "okay";
+	#sound-dai-cells = <0>;
+	rockchip,clk-trcm = <0>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2s1m0_sclktx
+		     &i2s1m0_lrcktx
+		     &i2s1m0_sclkrx
+		     &i2s1m0_lrckrx
+		     &i2s1m0_sdo0
+		     &i2s1m0_sdi0
+		     &i2s1m0_sdi1
+		     &i2s1m0_sdi2
+		     &i2s1m0_sdi3>;
+};
+
+&rk809_codec {
+	#sound-dai-cells = <1>;
+	compatible = "rockchip,rk809-codec", "rockchip,rk817-codec";
+	clocks = <&cru I2S1_MCLKOUT>;
+	clock-names = "mclk";
+	assigned-clocks = <&cru I2S1_MCLKOUT>, <&cru I2S1_MCLK_TX_IOE>;
+	assigned-clock-rates = <12288000>;
+	assigned-clock-parents = <&cru I2S1_MCLKOUT_TX>, <&cru I2S1_MCLKOUT_TX>;
+	pinctrl-names = "default";
+	pinctrl-0 = <&i2s1m0_mclk>;
+	pdmdata-out-enable;
+	adc-for-loopback;
+	hp-volume = <20>;
+	spk-volume = <3>;
+	mic-in-differential;
+	status = "okay";
 };
 
 &rk809_sound {
 	status = "disabled";
-    compatible = "simple-audio-card";
-    simple-audio-card,format = "i2s";
-    simple-audio-card,name = "rockchip,rk809-codec";
-    simple-audio-card,mclk-fs = <256>;
-
-    simple-audio-card,cpu {
-        sound-dai = <&i2s1_8ch>;
-    };
-    simple-audio-card,codec {
-        sound-dai = <&rk809_codec>;
-    };
-    simple-audio-card,codec {
-        sound-dai = <&es7210>;
-    };
 };
 
 &combphy0_us {
