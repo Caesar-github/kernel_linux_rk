@@ -535,9 +535,11 @@
 };
 
 &sdio_pwrseq {
-	clocks = <&pmucru CLK_RTC_32K>;
-	//pinctrl-0 = <&wifi_enable_h &wifi_32k>;//csqerr
-    pinctrl-0 = <&wifi_enable_h>;
+	compatible = "mmc-pwrseq-simple";
+	clocks = <&rk809 1>;
+	clock-names = "ext_clock";
+	pinctrl-names = "default";
+	pinctrl-0 = <&wifi_enable_h>;
 
 	/*
 	 * On the module itself this is one of these (depending
@@ -546,9 +548,14 @@
 	 * - PDN (power down when low)
 	 */
 	reset-gpios = <&gpio3 RK_PD5 GPIO_ACTIVE_LOW>;
+	status = "okay";
 };
 
 &sdmmc1 {
+	status = "disabled";
+};
+
+&sdmmc2 {
 	max-frequency = <150000000>;
 	supports-sdio;
 	bus-width = <4>;
@@ -559,13 +566,9 @@
 	mmc-pwrseq = <&sdio_pwrseq>;
 	non-removable;
 	pinctrl-names = "default";
-	pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_cmd &sdmmc1_clk>;
+	pinctrl-0 = <&sdmmc2m0_bus4 &sdmmc2m0_cmd &sdmmc2m0_clk>;
 	sd-uhs-sdr104;
 	status = "okay";
-};
-
-&sdmmc2 {
-	status = "disabled";
 };
 
 &uart1 {
