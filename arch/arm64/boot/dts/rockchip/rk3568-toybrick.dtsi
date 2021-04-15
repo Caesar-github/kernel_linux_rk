@@ -332,7 +332,7 @@
 	rx_delay = <0x26>;
 
 	phy-handle = <&rgmii_phy1>;
-	status = "disabled";
+	status = "okay";
 };
 
 /*
