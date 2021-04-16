@@ -191,6 +191,8 @@
 	};
 };
 
+
+
 &i2s1_8ch {
 	status = "okay";
 	#sound-dai-cells = <0>;
@@ -502,6 +504,69 @@
     rtc {
 		rtc_int: rtc-int {
 			rockchip,pins = <0 RK_PD3 RK_FUNC_GPIO &pcfg_pull_up>;
+		};
+	};
+
+	i2s1 {
+		/omit-if-no-ref/
+		i2s1m0_lrckrx: i2s1m0-lrckrx {
+			rockchip,pins =
+				/* i2s1m0_lrckrx */
+				<1 RK_PA6 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_lrcktx: i2s1m0-lrcktx {
+			rockchip,pins =
+				/* i2s1m0_lrcktx */
+				<1 RK_PA5 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_mclk: i2s1m0-mclk {
+			rockchip,pins =
+				/* i2s1m0_mclk */
+				<1 RK_PA2 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sclkrx: i2s1m0-sclkrx {
+			rockchip,pins =
+				/* i2s1m0_sclkrx */
+				<1 RK_PA4 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sclktx: i2s1m0-sclktx {
+			rockchip,pins =
+				/* i2s1m0_sclktx */
+				<1 RK_PA3 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sdi0: i2s1m0-sdi0 {
+			rockchip,pins =
+				/* i2s1m0_sdi0 */
+				<1 RK_PB3 1 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sdi1: i2s1m0-sdi1 {
+			rockchip,pins =
+				/* i2s1m0_sdi1 */
+				<1 RK_PB2 2 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sdi2: i2s1m0-sdi2 {
+			rockchip,pins =
+				/* i2s1m0_sdi2 */
+				<1 RK_PB1 2 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sdi3: i2s1m0-sdi3 {
+			rockchip,pins =
+				/* i2s1m0_sdi3 */
+				<1 RK_PB0 2 &pcfg_pull_up_drv_level_4>;
+		};
+		/omit-if-no-ref/
+		i2s1m0_sdo0: i2s1m0-sdo0 {
+			rockchip,pins =
+				/* i2s1m0_sdo0 */
+				<1 RK_PA7 1 &pcfg_pull_up_drv_level_4>;
 		};
 	};
 };
