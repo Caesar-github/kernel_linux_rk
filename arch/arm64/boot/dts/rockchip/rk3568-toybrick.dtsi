@@ -613,3 +613,7 @@
 	BT,wake_host_irq = <&gpio3 RK_PA1 GPIO_ACTIVE_HIGH>;
 	status = "okay";
 };
+
+&sata2 {
+	status = "okay";
+};
