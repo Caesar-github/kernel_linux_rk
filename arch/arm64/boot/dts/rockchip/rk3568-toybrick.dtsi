@@ -17,7 +17,7 @@
 
 	rk_headset: rk-headset {
 		compatible = "rockchip_headset";
-		headset_gpio = <&gpio3 RK_PC2 GPIO_ACTIVE_LOW>;//GPIO3 RK_PC3 for rk809
+		headset_gpio = <&gpio3 RK_PC3 GPIO_ACTIVE_LOW>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&hp_det>;
 	};
@@ -160,7 +160,7 @@
 	};
 
 	rk809_sound_micarray: rk809-sound-micarray {
-		status = "disabled";
+		status = "okay";
 		compatible = "simple-audio-card";
 		simple-audio-card,format = "i2s";
 		simple-audio-card,name = "rockchip,rk809-codec";
@@ -203,9 +203,10 @@
 &i2s1_8ch {
 	status = "okay";
 	#sound-dai-cells = <0>;
-	rockchip,clk-trcm = <1>;
+	rockchip,clk-trcm = <0>;
 	pinctrl-names = "default";
 	pinctrl-0 = <&i2s1m0_sclktx
+		     &i2s1m0_sclkrx
 		     &i2s1m0_lrcktx
 		     &i2s1m0_sclkrx
 		     &i2s1m0_lrckrx
@@ -215,6 +216,8 @@
 		     &i2s1m0_sdi2
 		     &i2s1m0_sdi3>;
 };
+
+
 #if 0
 
 &rk809_codec {
@@ -236,7 +239,7 @@
 };
 #endif
 &rk809_sound {
-	status = "okay";
+	status = "disabled";
 };
 
 &combphy0_us {
