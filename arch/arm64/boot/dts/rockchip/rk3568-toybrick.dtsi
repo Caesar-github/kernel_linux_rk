@@ -11,7 +11,6 @@
 #include "rk3568.dtsi"
 #include "rk3568-evb.dtsi"
 /delete-node/ &adc_keys;
-/delete-node/ &leds;
 
 / {
 	compatible = "rockchip,rk3568-toybrick", "rockchip,rk3568";
@@ -23,11 +22,8 @@
 		pinctrl-0 = <&hp_det>;
 	};
 
-    leds: gpio-leds {
+    gpio_leds: gpio-leds {
 		compatible = "gpio-leds";
-		pinctrl-names = "default";
-		pinctrl-0 =<&leds_gpio>;
-
 		led@1 {
 			gpios = <&gpio4 RK_PC2 GPIO_ACTIVE_HIGH>;
 			label = "blue"; // Blue LED
