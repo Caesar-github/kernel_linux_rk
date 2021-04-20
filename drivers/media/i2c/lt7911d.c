@@ -376,7 +376,7 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	struct v4l2_bt_timings *bt = &timings.bt;
 	memset(&timings, 0, sizeof(struct v4l2_dv_timings));
 	timings.type = V4L2_DV_BT_656_1120;
-	if (BKD2_17_REG&0x40 == 0 || Hactive == 0 || Vactive == 0) {
+	if ((BKD2_17_REG&0x40) == 0 || Hactive == 0 || Vactive == 0) {
 		//workaround way to ensure width and height > 1
 		Hactive = 640;
 		Vactive = 480;
