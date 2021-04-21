@@ -1644,7 +1644,7 @@ static int __gc8034_power_on(struct gc8034 *gc8034)
 	/* 8192 cycles prior to first SCCB transaction */
 	delay_us = gc8034_cal_delay(8192);
 	usleep_range(delay_us, delay_us * 2);
-
+	msleep(100);
 	return 0;
 
 disable_clk:
