@@ -315,11 +315,11 @@
 		     &gmac0_rgmii_clk
 		     &gmac0_rgmii_bus>;
 
-	tx_delay = <0x3c>;
-	rx_delay = <0x2f>;
+	tx_delay = <0x37>;
+	rx_delay = <0x2e>;
 
 	phy-handle = <&rgmii_phy0>;
-	status = "disabled";
+	status = "okay";
 };
 
 &gmac1 {
@@ -342,8 +342,8 @@
 		     &gmac1m1_rgmii_clk
 		     &gmac1m1_rgmii_bus>;
 
-	tx_delay = <0x4f>;
-	rx_delay = <0x26>;
+	tx_delay = <0x47>;
+	rx_delay = <0x28>;
 
 	phy-handle = <&rgmii_phy1>;
 	status = "okay";
@@ -819,7 +819,7 @@
 };
 
 &uart1 {
-	status = "okay";
+	status = "disabled";
 	pinctrl-names = "default";
 	pinctrl-0 = <&uart1m0_xfer &uart1m0_ctsn>;
 };
