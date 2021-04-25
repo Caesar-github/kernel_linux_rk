@@ -26,9 +26,9 @@ model_arm64=(
 	)
 
 model_arm=(
-	"TB-RV1126D    TR01126 arm   rv1126    0xff1a0000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
-	"TB-RV1126Ds   TRs1126 arm   rv1126    0xff1a0000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
-	"TB-ToyT01     TRt1126 arm   rv1126    0xff1a0000  rv1126-toybrick-ToyT01         -1     zImage.rv1126   rv1126_defconfig"
+	"TB-RV1126D    TR01126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
+	"TB-RV1126Ds   TRs1126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
+	"TB-ToyT01     TRt1126 arm   rv1126    0xff570000  rv1126-toybrick-ToyT01         -1     zImage.rv1126   rv1126_defconfig"
 	)
 #####################################################################################################################
 
