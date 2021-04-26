@@ -42,6 +42,25 @@ static const uint32_t formats_win_full_10bit[] = {
 	DRM_FORMAT_NV24_10,
 };
 
+static const uint32_t formats_win_full_10bit_yuyv[] = {
+	DRM_FORMAT_XRGB8888,
+	DRM_FORMAT_ARGB8888,
+	DRM_FORMAT_XBGR8888,
+	DRM_FORMAT_ABGR8888,
+	DRM_FORMAT_RGB888,
+	DRM_FORMAT_BGR888,
+	DRM_FORMAT_RGB565,
+	DRM_FORMAT_BGR565,
+	DRM_FORMAT_NV12,
+	DRM_FORMAT_NV16,
+	DRM_FORMAT_NV24,
+	DRM_FORMAT_NV12_10,
+	DRM_FORMAT_NV16_10,
+	DRM_FORMAT_NV24_10,
+	DRM_FORMAT_YVYU,
+	DRM_FORMAT_VYUY,
+};
+
 static const uint32_t formats_win_lite[] = {
 	DRM_FORMAT_XRGB8888,
 	DRM_FORMAT_ARGB8888,
@@ -1069,8 +1088,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 	{
 	  .name = "Esmart0-win0",
 	  .phys_id = 2,
-	  .formats = formats_win_full_10bit,
-	  .nformats = ARRAY_SIZE(formats_win_full_10bit),
+	  .formats = formats_win_full_10bit_yuyv,
+	  .nformats = ARRAY_SIZE(formats_win_full_10bit_yuyv),
 	  .format_modifiers = format_modifiers,
 	  .base = 0x0,
 	  .layer_sel_id = 2,
@@ -1113,8 +1132,8 @@ static const struct vop2_win_data rk3568_vop_win_data[] = {
 	{
 	  .name = "Esmart1-win0",
 	  .phys_id = 3,
-	  .formats = formats_win_full_10bit,
-	  .nformats = ARRAY_SIZE(formats_win_full_10bit),
+	  .formats = formats_win_full_10bit_yuyv,
+	  .nformats = ARRAY_SIZE(formats_win_full_10bit_yuyv),
 	  .format_modifiers = format_modifiers,
 	  .base = 0x200,
 	  .layer_sel_id = 6,
@@ -1167,6 +1186,7 @@ static const struct vop2_ctrl rk3568_vop_ctrl = {
 	.auto_gating_en = VOP_REG(RK3568_SYS_AUTO_GATING_CTRL, 0x1, 31),
 	.ovl_cfg_done_port = VOP_REG(RK3568_OVL_CTRL, 0x3, 30),
 	.ovl_port_mux_cfg_done_imd = VOP_REG(RK3568_OVL_CTRL, 0x1, 28),
+	.ovl_port_mux_cfg = VOP_REG(RK3568_OVL_PORT_SEL, 0xffff, 0),
 	.if_ctrl_cfg_done_imd = VOP_REG(RK3568_DSP_IF_POL, 0x1, 28),
 	.version = VOP_REG(RK3568_VERSION_INFO, 0xffff, 16),
 	.lut_dma_en = VOP_REG(RK3568_SYS_AXI_LUT_CTRL, 0x1, 0),

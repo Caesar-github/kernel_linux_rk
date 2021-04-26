@@ -128,7 +128,11 @@
 #define to_vop2_plane_state(x) container_of(x, struct vop2_plane_state, base)
 #define to_wb_state(x) container_of(x, struct vop2_wb_connector_state, base)
 
-
+/*
+ * max two jobs a time, one is running(writing back),
+ * another one will run in next frame.
+ */
+#define VOP2_WB_JOB_MAX      2
 #define VOP2_SYS_AXI_BUS_NUM 2
 
 #define VOP2_CLUSTER_YUV444_10 0x12
@@ -295,6 +299,11 @@ struct vop2_win {
 	 * one win can only attach to one vp at the one time.
 	 */
 	uint8_t vp_mask;
+	/**
+	 * @old_vp_mask: Bitmask of video_port0/1/2 this win attached of last commit,
+	 * this is used for trackng the change of VOP2_PORT_SEL register.
+	 */
+	uint8_t old_vp_mask;
 	uint8_t zpos;
 	uint32_t offset;
 	enum drm_plane_type type;
@@ -341,10 +350,30 @@ struct vop2_layer {
 	const struct vop2_layer_regs *regs;
 };
 
+struct vop2_wb_job {
+
+	bool pending;
+	/**
+	 * @fs_vsync_cnt: frame start vysnc counter,
+	 * used to get the write back complete event;
+	 */
+	uint32_t fs_vsync_cnt;
+};
+
 struct vop2_wb {
 	uint8_t vp_id;
 	struct drm_writeback_connector conn;
 	const struct vop2_wb_regs *regs;
+	struct vop2_wb_job jobs[VOP2_WB_JOB_MAX];
+	uint8_t job_index;
+
+	/**
+	 * @job_lock:
+	 *
+	 * spinlock to protect the job between vop2_wb_commit and vop2_wb_handler in isr.
+	 */
+	spinlock_t job_lock;
+
 };
 
 enum vop2_wb_format {
@@ -398,17 +427,6 @@ struct vop2_video_port {
 	 *
 	 */
 	bool sdr2hdr_en;
-
-	/**
-	 * @wb_en: write back enabled on this port;
-	 */
-	bool wb_en;
-
-	/**
-	 * @fs_vsync_cnt: frame start vysnc counter,
-	 * used to get the write back complete event;
-	 */
-	uint32_t fs_vsync_cnt;
 
 	/**
 	 * @bg_ovl_dly: The timing delay from background layer
@@ -506,6 +524,7 @@ struct vop2 {
 	 * @active_vp_mask: Bitmask of active video ports;
 	 */
 	uint8_t active_vp_mask;
+	uint16_t port_mux_cfg;
 
 	uint32_t *regsbak;
 	void __iomem *regs;
@@ -844,33 +863,36 @@ static void vop2_wait_for_fs_by_raw_status(struct vop2_video_port *vp)
 
 }
 
-static inline void vop2_cfg_done(struct drm_crtc *crtc)
+static uint16_t vop2_read_port_mux(struct vop2 *vop2)
 {
-	struct vop2_video_port *vp = to_vop2_video_port(crtc);
-	struct vop2_video_port *done_vp;
-	struct drm_display_mode *adjusted_mode;
+	return vop2_readl(vop2, RK3568_OVL_PORT_SEL) & 0xffff;
+}
+
+static void vop2_wait_for_port_mux_done(struct vop2 *vop2)
+{
+	uint16_t port_mux_cfg;
+	int ret;
+
+	/*
+	 * Spin until the previous port_mux figuration
+	 * is done.
+	 */
+	ret = readx_poll_timeout_atomic(vop2_read_port_mux, vop2, port_mux_cfg,
+					port_mux_cfg == vop2->port_mux_cfg, 0, 20 * 1000);
+	if (ret)
+		DRM_DEV_ERROR(vop2->dev, "wait port_mux done timeout: 0x%x--0x%x\n",
+			      port_mux_cfg, vop2->port_mux_cfg);
+}
+
+static int32_t vop2_pending_done_bits(struct vop2_video_port *vp)
+{
 	struct vop2 *vop2 = vp->vop2;
+	struct drm_display_mode *adjusted_mode;
+	struct vop2_video_port *done_vp;
 	uint32_t done_bits;
 	uint32_t vp_id;
 	uint32_t vcnt;
-	uint32_t val;
 
-	/*
-	 * This is a workaround, the config done bits of VP0,
-	 * VP1, VP2 on RK3568 stands on the first three bits
-	 * on REG_CFG_DONE register without mask bit.
-	 * If two or three config done events happens one after
-	 * another in a very shot time, the flowing config done
-	 * write may override the previous config done bit before
-	 * it take effect:
-	 * 1: config done 0x8001 for VP0
-	 * 2: config done 0x8002 for VP1
-	 *
-	 * 0x8002 may override 0x8001 before it take effect.
-	 *
-	 * So we do a read | write here.
-	 *
-	 */
 	done_bits = vop2_readl(vop2, RK3568_REG_CFG_DONE) & 0x7;
 	/* we have some vp wait for config done take effect */
 	if (done_bits) {
@@ -889,15 +911,53 @@ static inline void vop2_cfg_done(struct drm_crtc *crtc)
 			}
 		}
 	}
+
+	return done_bits;
+}
+
+static inline void vop2_cfg_done(struct drm_crtc *crtc)
+{
+	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+	struct vop2 *vop2 = vp->vop2;
+	uint32_t done_bits;
+	uint32_t val;
+
+	/*
+	 * This is a workaround, the config done bits of VP0,
+	 * VP1, VP2 on RK3568 stands on the first three bits
+	 * on REG_CFG_DONE register without mask bit.
+	 * If two or three config done events happens one after
+	 * another in a very shot time, the flowing config done
+	 * write may override the previous config done bit before
+	 * it take effect:
+	 * 1: config done 0x8001 for VP0
+	 * 2: config done 0x8002 for VP1
+	 *
+	 * 0x8002 may override 0x8001 before it take effect.
+	 *
+	 * So we do a read | write here.
+	 *
+	 */
+	done_bits = vop2_pending_done_bits(vp);
 	val = RK3568_VOP2_GLB_CFG_DONE_EN | BIT(vp->id) | done_bits;
 	vop2_writel(vop2, 0, val);
 }
 
-static inline void vop2_wb_cfg_done(struct vop2 *vop2)
+static inline void vop2_wb_cfg_done(struct vop2_video_port *vp)
 {
+	struct vop2 *vop2 = vp->vop2;
 	uint32_t val = RK3568_VOP2_WB_CFG_DONE | (RK3568_VOP2_WB_CFG_DONE << 16);
+	uint32_t done_bits;
+	unsigned long flags;
+
+	spin_lock_irqsave(&vop2->irq_lock, flags);
+	done_bits = vop2_pending_done_bits(vp);
+
+	val |=  RK3568_VOP2_GLB_CFG_DONE_EN | done_bits;
 
 	vop2_writel(vop2, 0, val);
+	spin_unlock_irqrestore(&vop2->irq_lock, flags);
+
 }
 
 static void vop2_win_disable(struct vop2_win *win)
@@ -946,6 +1006,10 @@ static enum vop2_data_format vop2_convert_format(uint32_t format)
 	case DRM_FORMAT_NV24_10:
 		return VOP2_FMT_YUV444SP_10;
 	case DRM_FORMAT_YUYV:
+	case DRM_FORMAT_YVYU:
+		return VOP2_FMT_VYUY422;
+	case DRM_FORMAT_VYUY:
+	case DRM_FORMAT_UYVY:
 		return VOP2_FMT_YUYV422;
 	default:
 		DRM_ERROR("unsupported format[%08x]\n", format);
@@ -1109,6 +1173,9 @@ static bool is_yuv_support(uint32_t format)
 	case DRM_FORMAT_NV24:
 	case DRM_FORMAT_NV24_10:
 	case DRM_FORMAT_YUYV:
+	case DRM_FORMAT_YVYU:
+	case DRM_FORMAT_UYVY:
+	case DRM_FORMAT_VYUY:
 		return true;
 	default:
 		return false;
@@ -1910,6 +1977,7 @@ static int vop2_wb_connector_init(struct vop2 *vop2)
 
 	vop2->wb.regs = vop2_data->wb->regs;
 	vop2->wb.conn.encoder.possible_crtcs = (1 << vop2_data->nr_vps) - 1;
+	spin_lock_init(&vop2->wb.job_lock);
 	drm_connector_helper_add(&vop2->wb.conn.base, &vop2_wb_connector_helper_funcs);
 
 	ret = drm_writeback_connector_init(vop2->drm_dev, &vop2->wb.conn,
@@ -1962,6 +2030,7 @@ static void vop2_wb_commit(struct drm_crtc *crtc)
 	struct drm_writeback_connector *wb_conn = &wb->conn;
 	struct drm_connector_state *conn_state = wb_conn->base.state;
 	struct vop2_wb_connector_state *wb_state;
+	unsigned long flags;
 	uint32_t fifo_throd;
 	uint8_t r2y;
 
@@ -1981,6 +2050,13 @@ static void vop2_wb_commit(struct drm_crtc *crtc)
 		drm_writeback_queue_job(wb_conn, conn_state->writeback_job);
 		conn_state->writeback_job = NULL;
 
+		spin_lock_irqsave(&wb->job_lock, flags);
+		wb->jobs[wb->job_index].pending = true;
+		wb->job_index++;
+		if (wb->job_index >= VOP2_WB_JOB_MAX)
+			wb->job_index = 0;
+		spin_unlock_irqrestore(&wb->job_lock, flags);
+
 		fifo_throd = fb->pitches[0] >> 4;
 		r2y = is_yuv_support(fb->format->format) && (!is_yuv_output(vcstate->bus_format));
 
@@ -1998,8 +2074,6 @@ static void vop2_wb_commit(struct drm_crtc *crtc)
 		VOP_MODULE_SET(vop2, wb, r2y_en, r2y);
 		VOP_MODULE_SET(vop2, wb, enable, 1);
 		vop2_wb_irqs_enable(vop2);
-		vp->wb_en = true;
-		vp->fs_vsync_cnt = 0;
 	}
 }
 
@@ -2227,7 +2301,8 @@ static void vop2_layer_map_initial(struct vop2 *vop2, uint32_t current_vp_id)
 	uint32_t used_layers = 0;
 	uint32_t layer_map, sel;
 	uint32_t win_map, vp_id;
-	uint32_t port_mux;
+	uint16_t port_mux_cfg = 0;
+	uint16_t port_mux;
 	uint32_t active_vp_mask = 0;
 	uint32_t standby;
 	uint32_t shift;
@@ -2275,6 +2350,7 @@ static void vop2_layer_map_initial(struct vop2 *vop2, uint32_t current_vp_id)
 					VOP_CTRL_SET(vop2, win_vp_id[win->phys_id], last_active_vp->id);
 
 				}
+				win->old_vp_mask = win->vp_mask;
 			}
 		}
 	}
@@ -2291,8 +2367,13 @@ static void vop2_layer_map_initial(struct vop2 *vop2, uint32_t current_vp_id)
 			port_mux = 8;
 		else
 			port_mux = used_layers - 1;
-		VOP_MODULE_SET(vop2, vp, port_mux, port_mux);
+		port_mux_cfg |= port_mux << (vp->id * 4);
 	}
+
+	/* the last VP is fixed */
+	port_mux_cfg |= 7 << (4 * (vop2->data->nr_vps - 1));
+	vop2->port_mux_cfg = port_mux_cfg;
+	VOP_CTRL_SET(vop2, ovl_port_mux_cfg, port_mux_cfg);
 
 	for (i = 0; i < vop2->data->nr_layers; i++) {
 		sel = (layer_map >> (4 * i)) & 0xf;
@@ -2344,7 +2425,7 @@ static void vop2_initial(struct drm_crtc *crtc)
 
 		VOP_MODULE_SET(vop2, wb, axi_yrgb_id, 0xd);
 		VOP_MODULE_SET(vop2, wb, axi_uv_id, 0xe);
-		vop2_wb_cfg_done(vop2);
+		vop2_wb_cfg_done(vp);
 
 		VOP_CTRL_SET(vop2, cfg_done_en, 1);
 		/*
@@ -2746,6 +2827,18 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 
 	if (!pstate->visible) {
 		vop2_plane_atomic_disable(plane, old_state);
+		return;
+	}
+
+	/*
+	 * This means this window is moved from another vp
+	 * so the VOP2_PORT_SEL register is changed
+	 * in this commit, we should not change this
+	 * win register before the VOP2_PORT_SEL take effect
+	 * on this VP, so skip this frame for safe.
+	 */
+	if (win->old_vp_mask != win->vp_mask) {
+		win->old_vp_mask = win->vp_mask;
 		return;
 	}
 
@@ -3336,6 +3429,20 @@ static int vop2_plane_info_dump(struct seq_file *s, struct drm_plane *plane)
 	return 0;
 }
 
+static void vop2_dump_connector_on_crtc(struct drm_crtc *crtc, struct seq_file *s)
+{
+	struct drm_connector_list_iter conn_iter;
+	struct drm_connector *connector;
+
+	drm_connector_list_iter_begin(crtc->dev, &conn_iter);
+	drm_for_each_connector_iter(connector, &conn_iter) {
+		if (crtc->state->connector_mask & drm_connector_mask(connector))
+			DEBUG_PRINT("    Connector: %s\n", connector->name);
+
+	}
+	drm_connector_list_iter_end(&conn_iter);
+}
+
 static int vop2_crtc_debugfs_dump(struct drm_crtc *crtc, struct seq_file *s)
 {
 	struct vop2_video_port *vp = to_vop2_video_port(crtc);
@@ -3350,8 +3457,7 @@ static int vop2_crtc_debugfs_dump(struct drm_crtc *crtc, struct seq_file *s)
 	if (!crtc_state->active)
 		return 0;
 
-	DEBUG_PRINT("    Connector: %s\n",
-		    drm_get_connector_name(state->output_type));
+	vop2_dump_connector_on_crtc(crtc, s);
 	DEBUG_PRINT("\tbus_format[%x]: %s\n", state->bus_format,
 		    drm_get_bus_format_name(state->bus_format));
 	DEBUG_PRINT("\toverlay_mode[%d] output_mode[%x]",
@@ -4474,13 +4580,16 @@ static void vop2_setup_alpha(struct vop2_video_port *vp,
 	/* Transfer pixel alpha value to next mix */
 	alpha_config.src_premulti_en = true;
 	alpha_config.dst_premulti_en = true;
-	alpha_config.src_pixel_alpha_en = true;
+	alpha_config.src_pixel_alpha_en = false;
 	alpha_config.src_glb_alpha_value = 0xff;
 	alpha_config.dst_glb_alpha_value = 0xff;
 	vop2_parse_alpha(&alpha_config, &alpha);
 
 	for (; i < hweight32(vp->win_mask); i++) {
 		offset = (mixer_id + i - 1) * 0x10;
+
+		vop2_writel(vop2, src_color_ctrl_offset + offset, alpha.src_alpha_ctrl.val);
+		vop2_writel(vop2, dst_color_ctrl_offset + offset, alpha.dst_color_ctrl.val);
 		vop2_writel(vop2, src_alpha_ctrl_offset + offset, alpha.src_alpha_ctrl.val);
 		vop2_writel(vop2, dst_alpha_ctrl_offset + offset, alpha.dst_alpha_ctrl.val);
 	}
@@ -4497,13 +4606,12 @@ static void vop2_setup_layer_mixer_for_vp(struct vop2_video_port *vp,
 	const struct vop2_zpos *zpos;
 	struct vop2_win *win;
 	struct vop2_layer *layer;
-	u8 used_layers = 0;
+	u16 port_mux_cfg = 0;
 	u8 port_mux;
+	u8 used_layers = 0;
 	u8 layer_id, win_phys_id;
 	int i;
 
-	VOP_CTRL_SET(vop2, ovl_cfg_done_port, port_id);
-	VOP_CTRL_SET(vop2, ovl_port_mux_cfg_done_imd, 0);
 	for (i = 0; i < vop2_data->nr_vps - 1; i++) {
 		prev_vp = &vop2->vps[i];
 		used_layers += hweight32(prev_vp->win_mask);
@@ -4524,12 +4632,21 @@ static void vop2_setup_layer_mixer_for_vp(struct vop2_video_port *vp,
 		else
 			port_mux = used_layers - 1;
 
+		port_mux_cfg |= port_mux << (prev_vp->id * 4);
+
 		if (port_mux > vop2_data->nr_mixers)
 			prev_vp->bg_ovl_dly = 0;
 		else
 			prev_vp->bg_ovl_dly = (vop2_data->nr_mixers - port_mux) << 1;
-		VOP_MODULE_SET(vop2, prev_vp, port_mux, port_mux);
 	}
+
+	port_mux_cfg |= 7 << (4 * (vop2->data->nr_vps - 1));
+
+	vop2_wait_for_port_mux_done(vop2);
+	vop2->port_mux_cfg = port_mux_cfg;
+	VOP_CTRL_SET(vop2, ovl_port_mux_cfg, port_mux_cfg);
+	VOP_CTRL_SET(vop2, ovl_cfg_done_port, port_id);
+	VOP_CTRL_SET(vop2, ovl_port_mux_cfg_done_imd, 0);
 
 	/*
 	 * Win and layer must map one by one, if a win is selected
@@ -5170,6 +5287,52 @@ static u32 vop2_read_and_clear_active_vp_irqs(struct vop2 *vop2, int vp_id)
 	return val;
 }
 
+static void vop2_wb_disable(struct vop2_video_port *vp)
+{
+	struct vop2 *vop2 = vp->vop2;
+	struct vop2_wb *wb = &vop2->wb;
+
+	VOP_MODULE_SET(vop2, wb, enable, 0);
+	vop2_wb_cfg_done(vp);
+}
+
+static void vop2_wb_handler(struct vop2_video_port *vp)
+{
+	struct vop2 *vop2 = vp->vop2;
+	struct vop2_wb *wb = &vop2->wb;
+	struct vop2_wb_job *job;
+	unsigned long flags;
+	uint8_t wb_en;
+	uint8_t wb_vp_id;
+	uint8_t i;
+
+	wb_en = vop2_readl(vop2, RK3568_WB_CTRL) & 0x01;
+	wb_vp_id = (vop2_readl(vop2, RK3568_LUT_PORT_SEL) >> 8) & 0x3;
+	if (wb_vp_id != vp->id)
+		return;
+	/*
+	 * The write back should work in one shot mode,
+	 * stop when write back complete in next vsync.
+	 */
+	if (wb_en)
+		vop2_wb_disable(vp);
+
+	spin_lock_irqsave(&wb->job_lock, flags);
+	for (i = 0; i < VOP2_WB_JOB_MAX; i++) {
+		job = &wb->jobs[i];
+		if (job->pending) {
+			job->fs_vsync_cnt++;
+
+			if (job->fs_vsync_cnt == 2) {
+				job->pending = false;
+				job->fs_vsync_cnt = 0;
+				drm_writeback_signal_completion(&vop2->wb.conn, 0);
+			}
+		}
+	}
+	spin_unlock_irqrestore(&wb->job_lock, flags);
+}
+
 static irqreturn_t vop2_isr(int irq, void *data)
 {
 	struct vop2 *vop2 = data;
@@ -5178,7 +5341,6 @@ static irqreturn_t vop2_isr(int irq, void *data)
 	const struct vop2_data *vop2_data = vop2->data;
 	size_t vp_max = min_t(size_t, vop2_data->nr_vps, ROCKCHIP_MAX_CRTC);
 	size_t axi_max = min_t(size_t, vop2_data->nr_axi_intr, VOP2_SYS_AXI_BUS_NUM);
-	struct vop2_wb *wb = &vop2->wb;
 	uint32_t vp_irqs[ROCKCHIP_MAX_CRTC];
 	uint32_t axi_irqs[VOP2_SYS_AXI_BUS_NUM];
 	uint32_t active_irqs;
@@ -5240,25 +5402,7 @@ static irqreturn_t vop2_isr(int irq, void *data)
 		}
 
 		if (active_irqs & FS_FIELD_INTR) {
-			if (vp->wb_en) {
-				vp->fs_vsync_cnt++;
-				/*
-				 * First frame start, the start of the write back
-				 * we should stop when write back complete.
-				 */
-				if (vp->fs_vsync_cnt == 1) {
-					VOP_MODULE_SET(vop2, wb, enable, 0);
-					vop2_wb_cfg_done(vop2);
-				}
-
-				/*
-				 * Second frame start, write back complete now.
-				 */
-				if (vp->fs_vsync_cnt == 2) {
-					drm_writeback_signal_completion(&vop2->wb.conn, 0);
-					vp->wb_en = 0;
-				}
-			}
+			vop2_wb_handler(vp);
 			drm_crtc_handle_vblank(crtc);
 			vop2_handle_vblank(vop2, crtc);
 			active_irqs &= ~FS_FIELD_INTR;

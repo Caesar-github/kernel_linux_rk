@@ -808,6 +808,15 @@ config VIDEO_OS04A10
 	  This is a Video4Linux2 sensor driver for the OmniVision
 	  OS04A10 camera.
 
+config VIDEO_OS04C10
+	tristate "OmniVision OS04C10 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the OmniVision
+	  OS04C10 camera.
+
 config VIDEO_OS05A20
 	tristate "OmniVision OS05A20 sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -816,6 +825,15 @@ config VIDEO_OS05A20
 	help
 	  This is a Video4Linux2 sensor driver for the OmniVision
 	  OS05A20 camera.
+
+config VIDEO_OS08A10
+	tristate "OmniVision OS08A10 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the OmniVision
+	  OS08A10 camera.
 
 config VIDEO_OV02B10
 	tristate "OmniVision OV02B10 sensor support"
@@ -1600,6 +1618,17 @@ config VIDEO_JX_H65
 	  To compile this driver as a module, choose M here: the
 	  module will be called jx_h65.
 
+config VIDEO_JX_K04
+	tristate "SOI JX_K04 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SOI JX_K04 sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called jx_k04.
+
 config VIDEO_SC031GS
 	tristate "SmartSens SC031GS sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1677,6 +1706,17 @@ config VIDEO_SC2310
 	  To compile this driver as a module, choose M here: the
 	  module will be called sc2310.
 
+config VIDEO_SC401AI
+	tristate "SmartSens SC401AI sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SmartSens SC401AI sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called SC401AI.
+
 config VIDEO_SC4238
 	tristate "SmartSens SC4238 sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1709,6 +1749,17 @@ config VIDEO_SC500AI
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called SC500AI.
+
+config VIDEO_SP250A
+	tristate "Superpix SP250A sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SmartSens SP250A sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called SP250A.
 
 comment "Flash devices"
 

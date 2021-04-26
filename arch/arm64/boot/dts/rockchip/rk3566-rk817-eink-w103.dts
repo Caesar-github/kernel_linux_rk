@@ -372,6 +372,7 @@
 		regulator-name = "vdd_cpu";
 		regulator-min-microvolt = <712500>;
 		regulator-max-microvolt = <1390000>;
+		regulator-init-microvolt = <900000>;
 		regulator-ramp-delay = <2300>;
 		fcs,suspend-voltage-selector = <0>;
 		regulator-initial-mode = <0x2>;
@@ -681,7 +682,7 @@
 &i2c1 {
 	status = "okay";
 
-	wacom: wacom@09 {
+	wacom: wacom@9 {
 		compatible = "wacom,w9013";
 		reg = <0x09>;
 		pwr-supply = <&vcc_tp>;
@@ -1055,6 +1056,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&sdmmc1_bus4 &sdmmc1_cmd &sdmmc1_clk>;
 	sd-uhs-sdr104;
+	rockchip,default-sample-phase = <90>;
 	status = "okay";
 };
 

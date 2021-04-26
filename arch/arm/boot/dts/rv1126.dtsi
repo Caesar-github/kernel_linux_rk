@@ -398,6 +398,8 @@
 			console-size = <0x40000>;
 			ftrace-size = <0x00000>;
 			pmsg-size = <0x40000>;
+			mcu-log-size = <0x40000>;
+			mcu-log-count = <0x1>;
 			status = "disabled";
 		};
 	};
@@ -1868,8 +1870,10 @@
 		interrupts = <GIC_SPI 56 IRQ_TYPE_LEVEL_HIGH>,
 			     <GIC_SPI 57 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "csi-intr1", "csi-intr2";
-		clocks = <&cru PCLK_CSIHOST>, <&cru SRST_CSIHOST_P>;
-		clock-names = "pclk_csi2host", "srst_csihost_p";
+		clocks = <&cru PCLK_CSIHOST>;
+		clock-names = "pclk_csi2host";
+		resets = <&cru SRST_CSIHOST_P>;
+		reset-names = "srst_csihost_p";
 		power-domains = <&power RV1126_PD_VI>;
 		status = "disabled";
 	};
@@ -2111,7 +2115,7 @@
 	};
 
 	rkvdec: rkvdec@ffb80000 {
-		compatible = "rockchip,rkv-decoder-v1";
+		compatible = "rockchip,rkv-decoder-rv1126", "rockchip,rkv-decoder-v1";
 		reg = <0xffb80000 0x400>;
 		interrupts = <GIC_SPI 71 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "irq_dec";

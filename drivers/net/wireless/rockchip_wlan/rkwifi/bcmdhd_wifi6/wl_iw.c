@@ -40,7 +40,7 @@
 #include <ethernet.h>
 
 #include <linux/if_arp.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <wlioctl.h>
 #ifdef WL_NAN
 #include <wlioctl_utils.h>
@@ -308,7 +308,7 @@ dev_wlc_ioctl(
 
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(5, 10, 0))
 	fs = get_fs();
-	set_fs(get_ds());
+	set_fs(KERNEL_DS);
 #if defined(WL_USE_NETDEV_OPS)
 	ret = dev->netdev_ops->ndo_do_ioctl(dev, &ifr, SIOCDEVPRIVATE);
 #else
