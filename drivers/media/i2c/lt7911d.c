@@ -582,7 +582,7 @@ static int lt7911d_check_device_id(struct lt7911d *lt7911d,
 
 static void lt7911d_power_on(struct lt7911d *lt7911d) {
         struct device *dev = &lt7911d->client->dev;
-		usleep_range(1500000, 2000000);
+	//	usleep_range(1500000, 2000000);
         if (!IS_ERR(lt7911d->power_gpio)) {
            gpiod_direction_output(lt7911d->power_gpio, 0);
            usleep_range(2000, 5000);
