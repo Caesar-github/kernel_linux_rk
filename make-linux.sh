@@ -2,36 +2,39 @@
 
 CPUs=`sed -n "N;/processor/p" /proc/cpuinfo|wc -l`
 DEFCONFIG=
-#####################################################################################################################################################
-#        model           flag    arch  chip      uart       dtb                           index  image           defconfig		   filesystem
-#####################################################################################################################################################
+#########################################################################################################################################
+#        model           flag    arch  chip      uart       dtb                           index  image           defconfig		
+#########################################################################################################################################
 model_arm64=(
-	"TB-RK3399ProD   TD03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prod-linux -1     Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProDs  TDs3310 arm64 RK3399pro 0xff1a0000 rk3399pro-toybrick-prod-linux -1     Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProP   TP03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prop-linux -1     Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProPs  TPs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prop-linux -1     Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProX0  TX03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 0      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProXs0 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 0      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProX1  TX03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3399ProXs1 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3568X0     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3568Xs0    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3568X1     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig  ext4"
-	"TB-RK3568Xs1    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig  ext4"
-	#"TB-RK1808M0     TM01808 arm64 RK1808    0xff550000 rk1808-toybrick-m0            -1     Image.RK1808    RK1808_linux_defconfig    ext4"
-	#"TB-RK1808S0     TS01808 arm64 RK1808    0xff550000 rk1808-toybrick-s0            -1     Image.RK1808    RK1808_linux_defconfig    ext4"
-	#"TB-RK1808CAM0   TC01808 arm64 RK1808    0xff550000 rk1808-toybrick-cam0          -1     Image.RK1808    RK1808_linux_defconfig    ext4"
-	#"TB-RK3568D      TD03568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig  ext4"  
-	#"TB-RK3568Ds     TDs3568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig  ext4"  
+	"TB-RK3399ProD   TD03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prod-linux -1     Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProDs  TDs3310 arm64 RK3399pro 0xff1a0000 rk3399pro-toybrick-prod-linux -1     Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProP   TP03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prop-linux -1     Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProPs  TPs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prop-linux -1     Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProX0  TX03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProXs0 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProX1  TX03310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3399ProXs1 TXs3310 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prox-linux 1      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568X0     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568Xs0    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    0      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568X1     TX03568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568Xs1    TXs3568 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux    1      Image.rockchip  rockchip_linux_defconfig"
+	#"TB-RK1808M0     TM01808 arm64 RK1808    0xff550000 rk1808-toybrick-m0            -1     Image.RK1808    RK1808_linux_defconfig"
+	#"TB-RK1808S0     TS01808 arm64 RK1808    0xff550000 rk1808-toybrick-s0            -1     Image.RK1808    RK1808_linux_defconfig"
+	#"TB-RK1808CAM0   TC01808 arm64 RK1808    0xff550000 rk1808-toybrick-cam0          -1     Image.RK1808    RK1808_linux_defconfig"
+	#"TB-RK3568D      TD03568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig"  
+	#"TB-RK3568Ds     TDs3568 arm64 RK3568    0xff660000 rk3568-toybrick-dev-linux     -1     Image.rockchip  rockchip_linux_defconfig"  
 	)
 
 model_arm=(
-	"TB-RV1126D    TR01126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig          ext4"
-	"TB-RV1126Ds   TRs1126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig          ext4"
-	"TB-ToyT01     TRt1126 arm   rv1126    0xff570000  rv1126-toybrick-ToyT01         -1     zImage.rv1126   rv1126_defconfig          ext4"
-	"TB-MI         TRt1126 arm   rv1126    0xff570000  rv1126-toybrick-mi             -1     zImage.rv1126   rv1126_defconfig          ubifs"
+	"TB-RV1126D    TR01126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
+	"TB-RV1126Ds   TRs1126 arm   rv1126    0xff570000  rv1126-toybrick-linux          -1     zImage.rv1126   rv1126_defconfig"
+	"TB-ToyT01     TRt1126 arm   rv1126    0xff570000  rv1126-toybrick-ToyT01         -1     zImage.rv1126   rv1126_defconfig"
 	)
-#####################################################################################################################################################
+
+model_ubifs=(
+	"TB-MI         TRt1126 arm   rv1126    0xff570000  rv1126-toybrick-mi             -1     zImage.rv1126   rv1126_defconfig"
+	)
+###########################################################################################################################################
 
 UBIFS_KERNEL_SIZE=8
 EXT4_KERNEL_SIZE=64
@@ -39,7 +42,7 @@ BLOCKS=4096
 
 function help()
 {
-	echo "Usage: ./make-linux.sh ARCH"
+	echo "Usage: ./make-linux.sh {arm|arm64}"
 	echo "e.g."
 	echo "  ./make-linux.sh arm"
 	echo "  ./make-linux.sh arm64"
@@ -50,6 +53,9 @@ function help()
 		echo "  ./make-linux.sh $(echo $i | awk '{print $1}')"
 	done
 	for i in "${model_arm64[@]}"; do
+		echo "  ./make-linux.sh $(echo $i | awk '{print $1}')"
+	done
+	for i in "${model_ubifs[@]}"; do
 		echo "  ./make-linux.sh $(echo $i | awk '{print $1}')"
 	done
 }
@@ -168,7 +174,7 @@ function make_kernel_image()
 
 function make_boot_linux()
 {
-	if [ "${10}" == "ubifs" ]; then
+	if [ "$1" == "ubifs" ]; then
 		size_m=${UBIFS_KERNEL_SIZE}
 	else
 		size_m=${EXT4_KERNEL_SIZE}
@@ -192,35 +198,47 @@ case $1 in
 		make_toybrick_dtb arm
 		for i in "${model_arm[@]}"; do
 			make_kernel_image $i
-			make_extlinux_conf $i 0
+			make_extlinux_conf $i ext4 0
 		done
+		make_boot_linux ext4
 		;;
 	arm64)
 		make_kernel_image ${model_arm64[0]}
 		make_toybrick_dtb arm64
 		for i in "${model_arm64[@]}"; do
 			make_kernel_image $i
-			make_extlinux_conf $i 0
+			make_extlinux_conf $i ext4 0
 		done
+		make_boot_linux ext4
 		;;
 	*)
 		if [ $# -eq 1 ]; then
+			found=0
 			for i in "${model_arm[@]}"; do
 				if [ "$(echo $i | awk '{print $1}')" == "$1" ]; then
 					make_toybrick_dtb $(echo $i | awk '{print $3}')
 					make_kernel_image $i
-					make_extlinux_conf $i 1
-					make_boot_linux $i
-					exit 0
+					make_extlinux_conf $i ext4 1
+					make_boot_linux ext4
+					found=1
 				fi
 			done
 			for i in "${model_arm64[@]}"; do
 				if [ "$(echo $i | awk '{print $1}')" == "$1" ]; then
 					make_toybrick_dtb $(echo $i | awk '{print $3}')
 					make_kernel_image $i
-					make_extlinux_conf $i 1
-					make_boot_linux $i
-					exit 0
+					make_extlinux_conf $i ext4 1
+					make_boot_linux ext4
+					found=1
+				fi
+			done
+			for i in "${model_ubifs[@]}"; do
+				if [ "$(echo $i | awk '{print $1}')" == "$1" ]; then
+					make_toybrick_dtb $(echo $i | awk '{print $3}')
+					make_kernel_image $i
+					make_extlinux_conf $i ubifs 1
+					make_boot_linux ubifs
+					found=1
 				fi
 			done
 			if [ ${found} -eq 0 ]; then
@@ -233,4 +251,3 @@ case $1 in
 		fi
 esac
 
-make_boot_linux
