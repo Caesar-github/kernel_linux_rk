@@ -183,6 +183,20 @@ enum vop2_pending {
 	VOP_PENDING_FB_UNREF,
 };
 
+enum vop2_layer_phy_id {
+	ROCKCHIP_VOP2_CLUSTER0 = 0,
+	ROCKCHIP_VOP2_CLUSTER1,
+	ROCKCHIP_VOP2_ESMART0,
+	ROCKCHIP_VOP2_ESMART1,
+	ROCKCHIP_VOP2_SMART0,
+	ROCKCHIP_VOP2_SMART1,
+	ROCKCHIP_VOP2_CLUSTER2,
+	ROCKCHIP_VOP2_CLUSTER3,
+	ROCKCHIP_VOP2_ESMART2,
+	ROCKCHIP_VOP2_ESMART3,
+	ROCKCHIP_VOP2_PHY_ID_INVALID = -1,
+};
+
 struct vop2_zpos {
 	int win_phys_id;
 	int zpos;
@@ -492,6 +506,23 @@ struct vop2_video_port {
 	 * @loader_protect: loader logo protect state
 	 */
 	bool loader_protect;
+
+	/**
+	 * @plane_mask: show the plane attach to this vp,
+	 * it maybe init at dts file or uboot driver
+	 */
+	uint32_t plane_mask;
+
+	/**
+	 * @plane_mask_prop: plane mask interaction with userspace
+	 */
+	struct drm_property *plane_mask_prop;
+
+	/**
+	 * @primary_plane_phy_id: vp primary plane phy id, the primary plane
+	 * will be used to show uboot logo and kernel logo
+	 */
+	enum vop2_layer_phy_id primary_plane_phy_id;
 };
 
 struct vop2 {
@@ -580,6 +611,9 @@ static const struct drm_bus_format_enum_list drm_bus_format_enum_list[] = {
 	{ MEDIA_BUS_FMT_RGB888_1X24, "RGB888_1X24" },
 	{ MEDIA_BUS_FMT_RGB888_1X7X4_SPWG, "RGB888_1X7X4_SPWG" },
 	{ MEDIA_BUS_FMT_RGB888_1X7X4_JEIDA, "RGB888_1X7X4_JEIDA" },
+	{ MEDIA_BUS_FMT_UYVY8_2X8, "UYVY8_2X8" },
+	{ MEDIA_BUS_FMT_YUYV8_1X16, "YUYV8_1X16" },
+	{ MEDIA_BUS_FMT_UYVY8_1X16, "UYVY8_1X16" },
 };
 
 static DRM_ENUM_NAME_FN(drm_get_bus_format_name, drm_bus_format_enum_list)
@@ -648,6 +682,12 @@ static inline void vop2_mask_write(struct vop2 *vop2, uint32_t offset,
 		writel_relaxed(v, vop2->regs + offset);
 	else
 		writel(v, vop2->regs + offset);
+}
+
+static inline u32 vop2_line_to_time(struct drm_display_mode *mode, int line)
+{
+	/* us */
+	return 1000000 / mode->crtc_clock * mode->crtc_htotal / 1000 * line;
 }
 
 static bool vop2_soc_is_rk3566(void)
@@ -857,7 +897,7 @@ static void vop2_wait_for_fs_by_raw_status(struct vop2_video_port *vp)
 	 * has take effect.
 	 */
 	ret = readx_poll_timeout_atomic(vop2_fs_raw_status_pending, vp, pending,
-					pending, 0, 10 * 1000);
+					pending, 0, 50 * 1000);
 	if (ret)
 		DRM_DEV_ERROR(vop2->dev, "wait vp%d raw fs statu timeout\n", vp->id);
 
@@ -878,7 +918,7 @@ static void vop2_wait_for_port_mux_done(struct vop2 *vop2)
 	 * is done.
 	 */
 	ret = readx_poll_timeout_atomic(vop2_read_port_mux, vop2, port_mux_cfg,
-					port_mux_cfg == vop2->port_mux_cfg, 0, 20 * 1000);
+					port_mux_cfg == vop2->port_mux_cfg, 0, 50 * 1000);
 	if (ret)
 		DRM_DEV_ERROR(vop2->dev, "wait port_mux done timeout: 0x%x--0x%x\n",
 			      port_mux_cfg, vop2->port_mux_cfg);
@@ -889,29 +929,85 @@ static int32_t vop2_pending_done_bits(struct vop2_video_port *vp)
 	struct vop2 *vop2 = vp->vop2;
 	struct drm_display_mode *adjusted_mode;
 	struct vop2_video_port *done_vp;
-	uint32_t done_bits;
+	uint32_t done_bits, done_bits_bak;
 	uint32_t vp_id;
 	uint32_t vcnt;
 
 	done_bits = vop2_readl(vop2, RK3568_REG_CFG_DONE) & 0x7;
-	/* we have some vp wait for config done take effect */
-	if (done_bits) {
-		vp_id = ffs(done_bits) - 1;
-		/* no need to wait for same vp */
-		if (vp_id != vp->id) {
-			done_vp = &vop2->vps[vp_id];
-			adjusted_mode = &done_vp->crtc.state->adjusted_mode;
-			vcnt = vop2_read_vcnt(done_vp);
-			if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
-				vcnt >>= 1;
-			/* if close to the last 1/8 frame, wait to next frame */
-			if (vcnt > (adjusted_mode->crtc_vtotal * 7 >> 3)) {
-				vop2_wait_for_fs_by_raw_status(done_vp);
-				done_bits = 0;
-			}
-		}
-	}
+	done_bits_bak = done_bits;
 
+	/* no done bit, so no need to wait config done take effect */
+	if (done_bits == 0)
+		return 0;
+
+	vp_id = ffs(done_bits) - 1;
+	/* done bit is same with current vp config done, so no need to wait */
+	if (hweight32(done_bits) == 1 && vp_id == vp->id)
+		return 0;
+
+	/* have the other one different vp, wait for config done take effect */
+	if (hweight32(done_bits) == 1 ||
+	    (hweight32(done_bits) == 2 && (done_bits & BIT(vp->id)))) {
+		/* two done bit, clear current vp done bit and find the other done bit vp */
+		if (done_bits & BIT(vp->id))
+			done_bits &= ~BIT(vp->id);
+		vp_id = ffs(done_bits) - 1;
+		done_vp = &vop2->vps[vp_id];
+		adjusted_mode = &done_vp->crtc.state->adjusted_mode;
+		vcnt = vop2_read_vcnt(done_vp);
+		if (adjusted_mode->flags & DRM_MODE_FLAG_INTERLACE)
+			vcnt >>= 1;
+		/* if close to the last 1/8 frame, wait to next frame */
+		if (vcnt > (adjusted_mode->crtc_vtotal * 7 >> 3)) {
+			vop2_wait_for_fs_by_raw_status(done_vp);
+			done_bits = 0;
+		}
+	} else { /* exist the other two vp done bit */
+		struct drm_display_mode *first_mode, *second_mode;
+		struct vop2_video_port *first_done_vp, *second_done_vp, *wait_vp;
+		uint32_t first_vp_id, second_vp_id;
+		uint32_t first_vp_vcnt, second_vp_vcnt;
+		uint32_t first_vp_left_vcnt, second_vp_left_vcnt;
+		uint32_t first_vp_left_time, second_vp_left_time;
+		uint32_t first_vp_safe_time, second_vp_safe_time;
+
+		first_vp_id = ffs(done_bits) - 1;
+		first_done_vp = &vop2->vps[first_vp_id];
+		first_mode = &first_done_vp->crtc.state->adjusted_mode;
+		/* set last 1/8 frame time as safe section */
+		first_vp_safe_time = 1000000 / first_mode->vrefresh >> 3;
+
+		done_bits &= ~BIT(first_vp_id);
+		second_vp_id = ffs(done_bits) - 1;
+		second_done_vp = &vop2->vps[second_vp_id];
+		second_mode = &second_done_vp->crtc.state->adjusted_mode;
+		/* set last 1/8 frame time as safe section */
+		second_vp_safe_time = 1000000 / second_mode->vrefresh >> 3;
+
+		first_vp_vcnt = vop2_read_vcnt(first_done_vp);
+		if (first_mode->flags & DRM_MODE_FLAG_INTERLACE)
+			first_vp_vcnt >>= 1;
+		second_vp_vcnt = vop2_read_vcnt(second_done_vp);
+		if (second_mode->flags & DRM_MODE_FLAG_INTERLACE)
+			second_vp_vcnt >>= 1;
+
+		first_vp_left_vcnt = first_mode->crtc_vtotal - first_vp_vcnt;
+		second_vp_left_vcnt = second_mode->crtc_vtotal - second_vp_vcnt;
+		first_vp_left_time = vop2_line_to_time(first_mode, first_vp_left_vcnt);
+		second_vp_left_time = vop2_line_to_time(second_mode, second_vp_left_vcnt);
+
+		/* if the two vp both at safe section, no need to wait */
+		if (first_vp_left_time > first_vp_safe_time &&
+		    second_vp_left_time > second_vp_safe_time)
+			return done_bits_bak;
+		if (first_vp_left_time > second_vp_left_time)
+			wait_vp = first_done_vp;
+		else
+			wait_vp = second_done_vp;
+
+		vop2_wait_for_fs_by_raw_status(wait_vp);
+		done_bits = 0;
+	}
 	return done_bits;
 }
 
@@ -2188,6 +2284,7 @@ static int vop2_crtc_atomic_cubic_lut_set(struct drm_crtc *crtc,
 					  struct drm_crtc_state *old_state)
 {
 	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+	struct rockchip_drm_private *private = crtc->dev->dev_private;
 	struct drm_color_lut *lut = vp->cubic_lut;
 	struct vop2 *vop2 = vp->vop2;
 	u32 *cubic_lut_kvaddr;
@@ -2199,16 +2296,22 @@ static int vop2_crtc_atomic_cubic_lut_set(struct drm_crtc *crtc,
 		return -ENODEV;
 	}
 
-	if (!vp->cubic_lut_gem_obj) {
-		size_t size = (vp->cubic_lut_len + 1) / 2 * 16;
+	if (!private->cubic_lut[vp->id].enable) {
+		if (!vp->cubic_lut_gem_obj) {
+			size_t size = (vp->cubic_lut_len + 1) / 2 * 16;
 
-		vp->cubic_lut_gem_obj = rockchip_gem_create_object(crtc->dev, size, true, 0);
-		if (IS_ERR(vp->cubic_lut_gem_obj))
-			return -ENOMEM;
+			vp->cubic_lut_gem_obj = rockchip_gem_create_object(crtc->dev, size, true, 0);
+			if (IS_ERR(vp->cubic_lut_gem_obj))
+				return -ENOMEM;
+		}
+
+		cubic_lut_kvaddr = (u32 *)vp->cubic_lut_gem_obj->kvaddr;
+		cubic_lut_mst = vp->cubic_lut_gem_obj->dma_addr;
+	} else {
+		cubic_lut_kvaddr = private->cubic_lut[vp->id].offset + private->cubic_lut_kvaddr;
+		cubic_lut_mst = private->cubic_lut[vp->id].offset + private->cubic_lut_dma_addr;
 	}
 
-	cubic_lut_kvaddr = (u32 *)vp->cubic_lut_gem_obj->kvaddr;
-	cubic_lut_mst = vp->cubic_lut_gem_obj->dma_addr;
 	for (i = 0; i < vp->cubic_lut_len / 2; i++) {
 		*cubic_lut_kvaddr++ = (lut[2 * i].red & 0xfff) +
 					((lut[2 * i].green & 0xfff) << 12) +
@@ -2335,21 +2438,8 @@ static void vop2_layer_map_initial(struct vop2 *vop2, uint32_t current_vp_id)
 			shift = vop2->data->ctrl->win_vp_id[j].shift;
 			vp_id = (win_map >> shift) & 0x3;
 			if (vp_id == i) {
-				/*
-				 * If the Video Port is not activated,
-				 * move the attached win to the last Video Port
-				 * we want enabled.
-				 */
-				if (active_vp_mask & BIT(vp_id)) {
-					vp->win_mask |=  BIT(j);
-					win->vp_mask = BIT(vp_id);
-
-				} else {
-					last_active_vp->win_mask |= BIT(j);
-					win->vp_mask = BIT(last_active_vp->id);
-					VOP_CTRL_SET(vop2, win_vp_id[win->phys_id], last_active_vp->id);
-
-				}
+				vp->win_mask |=  BIT(j);
+				win->vp_mask = BIT(vp_id);
 				win->old_vp_mask = win->vp_mask;
 			}
 		}
@@ -3355,6 +3445,7 @@ static int vop2_crtc_loader_protect(struct drm_crtc *crtc, bool on)
 {
 	struct vop2_video_port *vp = to_vop2_video_port(crtc);
 	struct vop2 *vop2 = vp->vop2;
+	struct rockchip_drm_private *private = crtc->dev->dev_private;
 
 	if (on == vp->loader_protect)
 		return 0;
@@ -3364,6 +3455,13 @@ static int vop2_crtc_loader_protect(struct drm_crtc *crtc, bool on)
 		vop2_set_system_status(vop2);
 		vop2_initial(crtc);
 		drm_crtc_vblank_on(crtc);
+		if (private->cubic_lut[vp->id].enable) {
+			dma_addr_t cubic_lut_mst;
+			struct loader_cubic_lut *cubic_lut = &private->cubic_lut[vp->id];
+
+			cubic_lut_mst = cubic_lut->offset + private->cubic_lut_dma_addr;
+			VOP_MODULE_SET(vop2, vp, cubic_lut_mst, cubic_lut_mst);
+		}
 		vp->loader_protect = true;
 	} else {
 		vop2_crtc_atomic_disable(crtc, NULL);
@@ -3553,12 +3651,14 @@ static int vop2_cubic_lut_show(struct seq_file *s, void *data)
 {
 	struct drm_info_node *node = s->private;
 	struct vop2 *vop2 = node->info_ent->data;
+	struct rockchip_drm_private *private = vop2->drm_dev->dev_private;
 	int i, j;
 
 	for (i = 0; i < vop2->data->nr_vps; i++) {
 		struct vop2_video_port *vp = &vop2->vps[i];
 
-		if (!vp->cubic_lut_gem_obj || !vp->cubic_lut || !vp->crtc.state->enable) {
+		if ((!vp->cubic_lut_gem_obj && !private->cubic_lut[vp->id].enable) ||
+		    !vp->cubic_lut || !vp->crtc.state->enable) {
 			DEBUG_PRINT("Video port%d cubic lut disabled\n", vp->id);
 			continue;
 		}
@@ -5639,6 +5739,40 @@ static void vop2_cubic_lut_init(struct vop2 *vop2)
 	}
 }
 
+static int vop2_crtc_create_plane_mask_property(struct vop2 *vop2,
+						struct drm_crtc *crtc)
+{
+	struct drm_property *prop;
+	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+
+	static const struct drm_prop_enum_list props[] = {
+		{ ROCKCHIP_VOP2_CLUSTER0, "Cluster0" },
+		{ ROCKCHIP_VOP2_CLUSTER1, "Cluster1" },
+		{ ROCKCHIP_VOP2_ESMART0, "Esmart0" },
+		{ ROCKCHIP_VOP2_ESMART1, "Esmart1" },
+		{ ROCKCHIP_VOP2_SMART0, "Smart0" },
+		{ ROCKCHIP_VOP2_SMART1, "Smart1" },
+		{ ROCKCHIP_VOP2_CLUSTER2, "Cluster2" },
+		{ ROCKCHIP_VOP2_CLUSTER3, "Cluster3" },
+		{ ROCKCHIP_VOP2_ESMART2, "Esmart2" },
+		{ ROCKCHIP_VOP2_ESMART3, "Esmart3" },
+	};
+
+	prop = drm_property_create_bitmask(vop2->drm_dev,
+					   DRM_MODE_PROP_IMMUTABLE, "PLANE_MASK",
+					   props, ARRAY_SIZE(props),
+					   0xffffffff);
+	if (!prop) {
+		DRM_DEV_ERROR(vop2->dev, "create plane_mask prop for vp%d failed\n", vp->id);
+		return -ENOMEM;
+	}
+
+	vp->plane_mask_prop = prop;
+	drm_object_attach_property(&crtc->base, vp->plane_mask_prop, vp->plane_mask);
+
+	return 0;
+}
+
 static int vop2_create_crtc(struct vop2 *vop2)
 {
 	const struct vop2_data *vop2_data = vop2->data;
@@ -5653,8 +5787,10 @@ static int vop2_create_crtc(struct vop2 *vop2)
 	uint32_t possible_crtcs;
 	uint64_t soc_id;
 	char dclk_name[9];
-	int i = 0, j = 0;
+	int i = 0, j = 0, k = 0;
 	int ret = 0;
+	bool be_used_for_primary_plane = false;
+	bool find_primary_plane = false;
 
 	/* all planes can attach to any crtc */
 	possible_crtcs = (1 << vop2_data->nr_vps) - 1;
@@ -5684,16 +5820,41 @@ static int vop2_create_crtc(struct vop2 *vop2)
 
 		crtc = &vp->crtc;
 
-		while (j < vop2->registered_num_wins) {
-			win = &vop2->win[j];
-			j++;
+		if (vp->primary_plane_phy_id >= 0) {
+			win = vop2_find_win_by_phys_id(vop2, vp->primary_plane_phy_id);
+			if (win)
+				find_primary_plane = true;
+		} else {
+			while (j < vop2->registered_num_wins) {
+				be_used_for_primary_plane = false;
+				win = &vop2->win[j];
+				j++;
 
-			if (win->type == DRM_PLANE_TYPE_PRIMARY)
+				if (win->parent || (win->feature & WIN_FEATURE_CLUSTER_SUB))
+					continue;
+
+				if (win->type != DRM_PLANE_TYPE_PRIMARY)
+					continue;
+
+				for (k = 0; k < vop2_data->nr_vps; k++) {
+					if (win->phys_id == vop2->vps[k].primary_plane_phy_id) {
+						be_used_for_primary_plane = true;
+						break;
+					}
+				}
+
+				if (be_used_for_primary_plane)
+					continue;
+
+				find_primary_plane = true;
 				break;
-			win = NULL;
+			}
+
+			if (find_primary_plane)
+				vp->primary_plane_phy_id = win->phys_id;
 		}
 
-		if (!win) {
+		if (!find_primary_plane) {
 			DRM_DEV_ERROR(vop2->dev, "No primary plane find for video_port%d\n", i);
 			break;
 		}
@@ -5737,14 +5898,25 @@ static int vop2_create_crtc(struct vop2 *vop2)
 					   drm_dev->mode_config.tv_top_margin_property, 100);
 		drm_object_attach_property(&crtc->base,
 					   drm_dev->mode_config.tv_bottom_margin_property, 100);
+		vop2_crtc_create_plane_mask_property(vop2, crtc);
 	}
 
 	/*
 	 * change the unused primary window to overlay window
 	 */
-	for (; j < vop2->registered_num_wins; j++) {
+	for (j = 0; j < vop2->registered_num_wins; j++) {
 		win = &vop2->win[j];
-		if (win->type == DRM_PLANE_TYPE_PRIMARY)
+		be_used_for_primary_plane = false;
+
+		for (k = 0; k < vop2_data->nr_vps; k++) {
+			if (vop2->vps[k].primary_plane_phy_id == win->phys_id) {
+				be_used_for_primary_plane = true;
+				break;
+			}
+		}
+
+		if (win->type == DRM_PLANE_TYPE_PRIMARY &&
+		    !be_used_for_primary_plane)
 			win->type = DRM_PLANE_TYPE_OVERLAY;
 	}
 
@@ -5915,6 +6087,7 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
 	size_t alloc_size;
 	int ret, i;
 	int num_wins = 0;
+	struct device_node *vop_out_node;
 
 	vop2_data = of_device_get_match_data(dev);
 	if (!vop2_data)
@@ -5983,6 +6156,31 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
 	if (vop2->irq < 0) {
 		DRM_DEV_ERROR(dev, "cannot find irq for vop2\n");
 		return vop2->irq;
+	}
+
+	vop_out_node = of_get_child_by_name(dev->of_node, "ports");
+	if (vop_out_node) {
+		struct device_node *child;
+
+		for_each_child_of_node(vop_out_node, child) {
+			u32 plane_mask = 0;
+			u32 primary_plane_phy_id = 0;
+			u32 vp_id = 0;
+
+			of_property_read_u32(child, "rockchip,plane-mask", &plane_mask);
+			of_property_read_u32(child, "rockchip,primary-plane", &primary_plane_phy_id);
+			of_property_read_u32(child, "reg", &vp_id);
+
+			vop2->vps[vp_id].plane_mask = plane_mask;
+			if (plane_mask)
+				vop2->vps[vp_id].primary_plane_phy_id = primary_plane_phy_id;
+			else
+				vop2->vps[vp_id].primary_plane_phy_id = ROCKCHIP_VOP2_PHY_ID_INVALID;
+
+			DRM_DEV_INFO(dev, "vp%d assign plane mask: 0x%x, primary plane phy id: %d\n",
+				     vp_id, vop2->vps[vp_id].plane_mask,
+				     vop2->vps[vp_id].primary_plane_phy_id);
+		}
 	}
 
 	spin_lock_init(&vop2->reg_lock);

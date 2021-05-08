@@ -790,6 +790,17 @@ config VIDEO_IMX415
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx415.
 
+config VIDEO_IMX464
+	tristate "Sony IMX464 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	help
+	  This is a Video4Linux2 sensor driver for the Sony
+	  IMX464 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called imx464.
+
 config VIDEO_OS02G10
 	tristate "OmniVision OS02G10 sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1336,6 +1347,22 @@ config VIDEO_S5K6A3
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
 	---help---
 	  This is a V4L2 sensor driver for Samsung S5K6A3 raw
+	  camera sensor.
+
+config VIDEO_S5KGM1SP
+	tristate "Samsung S5KGM1SP sensor support"
+	depends on MEDIA_CAMERA_SUPPORT
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	help
+	  This is a V4L2 sensor driver for Samsung S5KGM1SP raw
+	  camera sensor.
+
+config VIDEO_S5K4H7YX
+	tristate "Samsung S5K4H7YX sensor support"
+	depends on MEDIA_CAMERA_SUPPORT
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	help
+	  This is a V4L2 sensor driver for Samsung S5K4H7YX raw
 	  camera sensor.
 
 config VIDEO_S5K4ECGX

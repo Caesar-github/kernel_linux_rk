@@ -202,7 +202,8 @@
 
 	display_subsystem: display-subsystem {
 		compatible = "rockchip,display-subsystem";
-		logo-memory-region = <&drm_logo>;
+		memory-region = <&drm_logo>, <&drm_cubic_lut>;
+		memory-region-names = "drm-logo", "drm-cubic-lut";
 		ports = <&vop_out>;
 
 		route {
@@ -303,6 +304,11 @@
 
 		drm_logo: drm-logo@00000000 {
 			compatible = "rockchip,drm-logo";
+			reg = <0x0 0x0 0x0 0x0>;
+		};
+
+		drm_cubic_lut: drm-cubic-lut@00000000 {
+			compatible = "rockchip,drm-cubic-lut";
 			reg = <0x0 0x0 0x0 0x0>;
 		};
 	};
@@ -712,11 +718,13 @@
 					lvds_in_vp1: endpoint@1 {
 						reg = <1>;
 						remote-endpoint = <&vp1_out_lvds>;
+						status = "disabled";
 					};
 
 					lvds_in_vp2: endpoint@2 {
 						reg = <2>;
 						remote-endpoint = <&vp2_out_lvds>;
+						status = "disabled";
 					};
 				};
 			};
@@ -740,6 +748,7 @@
 					rgb_in_vp2: endpoint@2 {
 						reg = <2>;
 						remote-endpoint = <&vp2_out_rgb>;
+						status = "disabled";
 					};
 				};
 			};
@@ -1626,7 +1635,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 
-			port@0 {
+			vp0: port@0 {
 				#address-cells = <1>;
 				#size-cells = <0>;
 				reg = <0>;
@@ -1652,7 +1661,7 @@
 				};
 			};
 
-			port@1 {
+			vp1: port@1 {
 				#address-cells = <1>;
 				#size-cells = <0>;
 				reg = <1>;
@@ -1683,7 +1692,7 @@
 				};
 			};
 
-			port@2 {
+			vp2: port@2 {
 				#address-cells = <1>;
 				#size-cells = <0>;
 
@@ -1741,11 +1750,13 @@
 				dsi0_in_vp0: endpoint@0 {
 					reg = <0>;
 					remote-endpoint = <&vp0_out_dsi0>;
+					status = "disabled";
 				};
 
 				dsi0_in_vp1: endpoint@1 {
 					reg = <1>;
 					remote-endpoint = <&vp1_out_dsi0>;
+					status = "disabled";
 				};
 			};
 		};
@@ -1779,11 +1790,13 @@
 				dsi1_in_vp0: endpoint@0 {
 					reg = <0>;
 					remote-endpoint = <&vp0_out_dsi1>;
+					status = "disabled";
 				};
 
 				dsi1_in_vp1: endpoint@1 {
 					reg = <1>;
 					remote-endpoint = <&vp1_out_dsi1>;
+					status = "disabled";
 				};
 			};
 		};
@@ -1819,10 +1832,12 @@
 				hdmi_in_vp0: endpoint@0 {
 					reg = <0>;
 					remote-endpoint = <&vp0_out_hdmi>;
+					status = "disabled";
 				};
 				hdmi_in_vp1: endpoint@1 {
 					reg = <1>;
 					remote-endpoint = <&vp1_out_hdmi>;
+					status = "disabled";
 				};
 			};
 		};
@@ -1854,11 +1869,13 @@
 				edp_in_vp0: endpoint@0 {
 					reg = <0>;
 					remote-endpoint = <&vp0_out_edp>;
+					status = "disabled";
 				};
 
 				edp_in_vp1: endpoint@1 {
 					reg = <1>;
 					remote-endpoint = <&vp1_out_edp>;
+					status = "disabled";
 				};
 			};
 		};
@@ -3060,7 +3077,7 @@
 		rockchip,hw-tshut-mode = <0>; /* tshut mode 0:CRU 1:GPIO */
 		rockchip,hw-tshut-polarity = <0>; /* tshut polarity 0:LOW 1:HIGH */
 		pinctrl-names = "gpio", "otpout";
-		pinctrl-0 = <&tsadc_gpio>;
+		pinctrl-0 = <&tsadc_gpio_func>;
 		pinctrl-1 = <&tsadc_shutorg>;
 		status = "disabled";
 	};
