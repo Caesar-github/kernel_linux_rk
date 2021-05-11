@@ -92,6 +92,8 @@ struct lt7911d {
         struct v4l2_ctrl        *link_freq;
 
         int irq;
+        struct workqueue_struct *queue;
+        struct work_struct work;
 };
 
 static int lt7911d_s_dv_timings(struct v4l2_subdev *sd,
@@ -131,15 +133,15 @@ static int lt7911d_read(struct i2c_client *client, u8 reg, u8 *val)
 	u8 buf[1];
 	int ret;
 
-	buf[0] = reg & 0xFF;
+	//buf[0] = reg & 0xFF;
 
 	msg[0].addr = client->addr;
 	msg[0].flags = client->flags;
-	msg[0].buf = buf;
-	msg[0].len = sizeof(buf);
+	msg[0].buf = &reg;
+	msg[0].len = 1;//sizeof(buf);
 
 	msg[1].addr = client->addr;
-	msg[1].flags = client->flags | I2C_M_RD;
+	msg[1].flags = I2C_M_RD;
 	msg[1].buf = buf;
 	msg[1].len = 1;
 
@@ -256,22 +258,13 @@ static int lt7911d_s_power(struct v4l2_subdev *sd, int on)
 	return 0;
 }
 
-static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
+static int lt7911d_get_resolution(struct i2c_client *client, unsigned int *Hactive, unsigned int * Vactive)
 {
-	u16 intstatus = 0; // = i2c_rd16(sd, INTSTATUS);
-	unsigned int Hactive=0;  // report to app
-	unsigned int Vactive=0;  // report to app
-	struct lt7911d *lt7911d = to_lt7911d(sd);
-	struct i2c_client *client = lt7911d->client;
-	const struct v4l2_event lt7911d_ev_fmt = {
-		.type = V4L2_EVENT_SOURCE_CHANGE,
-		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
-	};
-	int ret;
+    int ret;
 	//unsigned char VtotalH,VtotalL;		//Vtotal[11:0]
 	unsigned char VactiveH,VactiveL;	//Vactive[11:0]
 	//unsigned char VsyncW,VBP,VFP;		//V blank timing 8bits
-	
+
 	//特别注意：H方向的读取Timing等于实际Timing的二分之一
 	//例如读出的Hactived[15:0] = 0x021c，则实际的Hactive=0x021c*2=0x0438=1080
 	//unsigned char HtotalH,HtotalL;		//Htotal[15:0]
@@ -284,7 +277,6 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	unsigned char HBPH,HBPL;			//HBP[11:0]
 	unsigned char HFPH,HFPL;			//HFP[11:0]
 	*/
-	v4l2_dbg(1, debug, sd, "%s: IntStatus = 0x%04x\n", __func__, intstatus);
 
 	//step 1: enable chip IIC, (bank reg is 0xff, bank value is 0x80)
 	ret=lt7911d_write(client,0xFF, 0x80);
@@ -358,9 +350,9 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 	printk("HtotalH = 0x%x\n", HtotalH);
 	printk("HtotalL = 0x%x\n\n", HtotalL);
 	*/
-	Hactive =  (HactiveH<<8|HactiveL)*2;
-	Vactive = VactiveH<<8|VactiveL;
-	printk(">> PCR Hactive = %d;Vactive = %d\n\n", Hactive,Vactive);
+	*Hactive =  (HactiveH<<8|HactiveL)*2;
+	*Vactive = VactiveH<<8|VactiveL;
+	printk(">> PCR Hactive = %d;Vactive = %d\n\n", *Hactive, *Vactive);
 	//printk(">> MSA Hactive = %d;Vactive = %d\n\n", msaHH << 8|msaHL,msaVH<<8|msaVL);
 	printk(">> BKD2_17_REG = 0x%x\n", BKD2_17_REG&0x40);
 	printk(">> BKD2_08_REG = 0x%x\n", BKD2_08_REG);
@@ -370,17 +362,34 @@ static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
 		printk("i2c transfer error \n");
 	}
 
+	if ((BKD2_17_REG&0x40) == 0 || *Hactive == 0 || *Vactive == 0) {
+		//workaround way to ensure width and height > 1
+		*Hactive = 640;
+		*Vactive = 480;
+	}
+
+    return 0;
+}
+
+static int lt7911d_isr(struct v4l2_subdev *sd, u32 status, bool *handled)
+{
+	unsigned int Hactive=0;  // report to app
+	unsigned int Vactive=0;  // report to app
+	struct lt7911d *lt7911d = to_lt7911d(sd);
+	struct i2c_client *client = lt7911d->client;
+	const struct v4l2_event lt7911d_ev_fmt = {
+		.type = V4L2_EVENT_SOURCE_CHANGE,
+		.u.src_change.changes = V4L2_EVENT_SRC_CH_RESOLUTION,
+	};
+
+    lt7911d_get_resolution(client, &Hactive, &Vactive);
 	/* handle width and height change event */
-	if ((BKD2_17_REG&0x40) == 0 || lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
+	if (lt7911d->timings.bt.width != Hactive || lt7911d->timings.bt.height != Vactive) {
 	struct v4l2_dv_timings timings;
 	struct v4l2_bt_timings *bt = &timings.bt;
 	memset(&timings, 0, sizeof(struct v4l2_dv_timings));
 	timings.type = V4L2_DV_BT_656_1120;
-	if ((BKD2_17_REG&0x40) == 0 || Hactive == 0 || Vactive == 0) {
-		//workaround way to ensure width and height > 1
-		Hactive = 640;
-		Vactive = 480;
-	}
+
 	bt->width = Hactive;
 	bt->height = Vactive;
 	timings.bt.height = Vactive;
@@ -580,6 +589,16 @@ static int lt7911d_check_device_id(struct lt7911d *lt7911d,
 	return 0;
 }
 
+void get_init_resolution(struct work_struct *work)
+{
+    struct lt7911d *lt7911d =
+    container_of(work, struct lt7911d, work);
+    bool handled = 0;
+    lt7911d_isr(&lt7911d->subdev, 0, &handled);
+    //mdelay(1000);
+    //queue_work(workqueue_test, &work_test);
+}
+
 static void lt7911d_power_on(struct lt7911d *lt7911d) {
         struct device *dev = &lt7911d->client->dev;
 	//	usleep_range(1500000, 2000000);
@@ -609,6 +628,12 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
         if (!IS_ERR(lt7911d->reset_gpio)) {
            gpiod_set_value_cansleep(lt7911d->reset_gpio, 1);
            usleep_range(2000, 5000);
+        }
+
+        lt7911d->queue=create_singlethread_workqueue("lt7911d_thread");
+        if (lt7911d->queue) {
+            INIT_WORK(&lt7911d->work, get_init_resolution);
+            queue_work(lt7911d->queue, &lt7911d->work);
         }
         //msleep(300);
         dev_info(dev, "lt7911d power up \n");
@@ -791,6 +816,7 @@ static int lt7911d_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct lt7911d *lt7911d = to_lt7911d(sd);
 
+    destroy_workqueue(lt7911d->queue);
 	v4l2_async_unregister_subdev(sd);
 	media_entity_cleanup(&sd->entity);
 	mutex_destroy(&lt7911d->mutex);
