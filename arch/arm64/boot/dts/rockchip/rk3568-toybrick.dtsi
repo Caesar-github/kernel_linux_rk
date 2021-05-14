@@ -357,6 +357,16 @@
 	power-supply = <&vcc3v3_lcd0_n>;
 };
 
+&i2c0 {
+	status = "okay";
+	rk809: pmic@20 {
+		compatible = "rockchip,rk809";
+		reg = <0x20>;
+		/*save the PMIC_POWER_EN register in uboot */
+		not-save-power-en = <0>;
+	};
+};
+
 &i2c3 {
 	status = "okay";
 	rt5670: rt5670@1c {
