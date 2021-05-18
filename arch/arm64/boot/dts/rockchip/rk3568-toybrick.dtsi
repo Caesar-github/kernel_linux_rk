@@ -757,8 +757,8 @@
 	rk809: pmic@20 {
 		compatible = "rockchip,rk809";
 		reg = <0x20>;
-		/*save the PMIC_POWER_EN register in uboot */
-		not-save-power-en = <0>;
+		/*not save the PMIC_POWER_EN register in uboot */
+		not-save-power-en = <1>;
 		regulators {
 			vccio_acodec: LDO_REG4 {
 				regulator-always-on;
