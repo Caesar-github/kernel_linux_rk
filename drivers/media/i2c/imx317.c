@@ -1409,7 +1409,7 @@ static int imx317_check_sensor_id(struct imx317 *imx317,
 
 	ret = imx317_read_reg(client, IMX317_REG_CHIP_ID,
 			      IMX317_REG_VALUE_08BIT, &id);
-	if (id != CHIP_ID) {
+	if (id != CHIP_ID || ret != 0) {
 		dev_err(dev, "Unexpected sensor id(%06x), ret(%d)\n", id, ret);
 		return -ENODEV;
 	}
