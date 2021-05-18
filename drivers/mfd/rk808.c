@@ -1063,6 +1063,7 @@ static int rk817_reboot_notifier_handler(struct notifier_block *nb,
 
 	regmap_read(data->rk808->regmap, RK817_POWER_EN_SAVE0,
 		    &power_en_active0);
+    printk(KERN_ERR "chensq power_en_active0 is 0x%x,%s--%d\n", power_en_active0, __FUNCTION__, __LINE__);
 	if (power_en_active0 != 0) {
 		regmap_read(data->rk808->regmap, RK817_POWER_EN_SAVE1,
 			    &power_en_active1);
@@ -1190,7 +1191,7 @@ static int rk808_probe(struct i2c_client *client,
 	int nr_pre_init_regs;
 	int nr_cells;
 	int ret;
-	int i;
+	int i, power_en_active0 = 0;
 	void (*of_property_prepare_fn)(struct rk808 *rk808,
 				       struct device *dev) = NULL;
 	int (*pinctrl_init)(struct device *dev, struct rk808 *rk808) = NULL;
@@ -1207,6 +1208,7 @@ static int rk808_probe(struct i2c_client *client,
 		pmic_id_msb = RK808_ID_MSB;
 		pmic_id_lsb = RK808_ID_LSB;
 	}
+
 
 	/* Read chip variant */
 	msb = i2c_smbus_read_byte_data(client, pmic_id_msb);
@@ -1312,6 +1314,9 @@ static int rk808_probe(struct i2c_client *client,
 		dev_err(&client->dev, "regmap initialization failed\n");
 		return PTR_ERR(rk808->regmap);
 	}
+	regmap_read(rk808->regmap, RK817_POWER_EN_SAVE0,
+				&power_en_active0);
+	printk(KERN_ERR "chensq power_en_active0 is 0x%x,%s--%d\n", power_en_active0, __FUNCTION__, __LINE__);
 
 	if (on_source && off_source) {
 		ret = regmap_read(rk808->regmap, on_source, &on);
