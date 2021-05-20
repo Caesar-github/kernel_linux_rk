@@ -56,13 +56,17 @@
 	status = "okay";
 };
 
+&edp {
+	status = "disabled";
+};
+
 &dsi1_in_vp0 {
-	status = "okay";
+	status = "disabled";
 	
 };
 
 &dsi1_in_vp1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &dsi1_panel {

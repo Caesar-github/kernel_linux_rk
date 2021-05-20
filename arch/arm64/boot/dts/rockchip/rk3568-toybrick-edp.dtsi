@@ -105,15 +105,23 @@
 };
 
 &edp_in_vp0 {
-	status = "okay";
+	status = "disabled";
 };
 
 &edp_in_vp1 {
-	status = "disabled";
+	status = "okay";
 };
 
 &edp_panel {
 	power-supply = <&vcc3v3_lcd0_n>;
+};
+
+&dsi0 {
+	status = "diabled";
+};
+
+&dsi1 {
+	status = "diabled";
 };
 
 &i2c1 {
