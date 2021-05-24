@@ -69,3 +69,10 @@
 	};
 };
 
+&wireless_wlan {
+	/*
+	 * V1.0 WIFI_WAKE_HOST is GPIO2_A2
+	 * V1.1 WIFI_WAKE_HOST from GPIO2_A2 to GPIO1_D5
+	 */
+	WIFI,host_wake_irq = <&gpio1 RK_PD5 GPIO_ACTIVE_HIGH>;
+};
