@@ -76,3 +76,8 @@
 	 */
 	WIFI,host_wake_irq = <&gpio1 RK_PD5 GPIO_ACTIVE_HIGH>;
 };
+
+&gmac {
+	tx_delay = <0x2e>;
+	rx_delay = <0x20>;
+};
