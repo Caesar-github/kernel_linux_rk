@@ -94,6 +94,8 @@ struct lt7911d {
         int irq;
         struct workqueue_struct *queue;
         struct work_struct work;
+        struct delayed_work delaywork;
+        int irq_flag;
 };
 
 static int lt7911d_s_dv_timings(struct v4l2_subdev *sd,
@@ -408,7 +410,7 @@ static irqreturn_t lt7911d_irq_handler(int irq, void *dev_id)
 	struct lt7911d *lt7911d = dev_id;
 	//struct device *dev = &lt7911d->client->dev;
 	bool handled = 0;
-
+    lt7911d->irq_flag = 1;
 	printk("gpio5 interrupt occur\n");
 	gpiod_direction_input(lt7911d->irq_gpio);
 
@@ -563,37 +565,40 @@ static const struct v4l2_subdev_internal_ops lt7911d_internal_ops = {
         .open = lt7911d_open,
 };
 
-static int lt7911d_check_device_id(struct lt7911d *lt7911d,
-				  struct i2c_client *client)
-{
+// static int lt7911d_check_device_id(struct lt7911d *lt7911d,
+// 				  struct i2c_client *client)
+// {
 
-	struct device *dev = &lt7911d->client->dev;
-	u16 id = 0;
-	u8 pid, ver;
-	int ret;
+// 	struct device *dev = &lt7911d->client->dev;
+// 	u16 id = 0;
+// 	u8 pid, ver;
+// 	int ret;
 
-        lt7911d_write(client, 0xff, 0x80);
-	lt7911d_write(client, 0xee, 0x01);
-        lt7911d_write(client, 0xff,  0xa0);
-	ret = lt7911d_read(client, REG_SC_CHIP_ID_H, &pid);
-        ret = lt7911d_read(client, REG_SC_CHIP_ID_L, &ver);
-	lt7911d_write(client, 0xff, 0x80);
-	lt7911d_write(client, 0xee, 0x00);	
-	id = (pid << 8) | ver;
-	if (id != CHIP_ID) {
-		dev_err(dev, "Unexpected device id(%06x), ret(%d)\n", id, ret);
-		//return -ENODEV;
-	}else
-		dev_info(dev, "Detected lontium%04x, expected id=%04x \n", id, CHIP_ID);
+//         lt7911d_write(client, 0xff, 0x80);
+// 	lt7911d_write(client, 0xee, 0x01);
+//         lt7911d_write(client, 0xff,  0xa0);
+// 	ret = lt7911d_read(client, REG_SC_CHIP_ID_H, &pid);
+//         ret = lt7911d_read(client, REG_SC_CHIP_ID_L, &ver);
+// 	lt7911d_write(client, 0xff, 0x80);
+// 	lt7911d_write(client, 0xee, 0x00);
+// 	id = (pid << 8) | ver;
+// 	if (id != CHIP_ID) {
+// 		dev_err(dev, "Unexpected device id(%06x), ret(%d)\n", id, ret);
+// 		//return -ENODEV;
+// 	}else
+// 		dev_info(dev, "Detected lontium%04x, expected id=%04x \n", id, CHIP_ID);
 
-	return 0;
-}
+// 	return 0;
+// }
 
 void get_init_resolution(struct work_struct *work)
 {
     struct lt7911d *lt7911d =
-    container_of(work, struct lt7911d, work);
+    container_of(to_delayed_work(work), struct lt7911d, delaywork);
     bool handled = 0;
+    if (lt7911d->irq_flag == 1) {
+        return;
+    }
     lt7911d_isr(&lt7911d->subdev, 0, &handled);
     //mdelay(1000);
     //queue_work(workqueue_test, &work_test);
@@ -607,15 +612,15 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
            usleep_range(2000, 5000);
         }
 
-        if (!IS_ERR(lt7911d->reset_gpio))
-           gpiod_direction_output(lt7911d->reset_gpio, 1);
+        // if (!IS_ERR(lt7911d->reset_gpio))
+        //    gpiod_direction_output(lt7911d->reset_gpio, 1);
 
-        usleep_range(1000, 2000);
+        // usleep_range(1000, 2000);
 
-        if (!IS_ERR(lt7911d->reset_gpio))
-           gpiod_direction_output(lt7911d->reset_gpio, 0);
+        // if (!IS_ERR(lt7911d->reset_gpio))
+        //    gpiod_direction_output(lt7911d->reset_gpio, 0);
 
-        usleep_range(1000, 1500);
+        // usleep_range(1000, 1500);
         /*
          * There is no need to wait for the delay of RC circuit
          * if the reset signal is directly controlled by GPIO.
@@ -625,15 +630,14 @@ static void lt7911d_power_on(struct lt7911d *lt7911d) {
            usleep_range(2000, 5000);
         }
         //msleep(200);
-        if (!IS_ERR(lt7911d->reset_gpio)) {
-           gpiod_set_value_cansleep(lt7911d->reset_gpio, 1);
-           usleep_range(2000, 5000);
-        }
-
-        lt7911d->queue=create_singlethread_workqueue("lt7911d_thread");
+    //     if (!IS_ERR(lt7911d->reset_gpio)) {
+    //        gpiod_set_value_cansleep(lt7911d->reset_gpio, 1);
+    //        usleep_range(2000, 5000);
+    //     }
+        lt7911d->queue=create_workqueue("lt7911d_thread");
         if (lt7911d->queue) {
-            INIT_WORK(&lt7911d->work, get_init_resolution);
-            queue_work(lt7911d->queue, &lt7911d->work);
+            INIT_DELAYED_WORK(&lt7911d->delaywork, get_init_resolution);
+            queue_delayed_work(lt7911d->queue, &lt7911d->delaywork, 1000);
         }
         //msleep(300);
         dev_info(dev, "lt7911d power up \n");
@@ -797,9 +801,9 @@ static int lt7911d_probe(struct i2c_client *client,
         lt7911d_s_dv_timings(sd, &default_timing);
         lt7911d_power_on(lt7911d);
         enable_irq(lt7911d->irq);
-        ret = lt7911d_check_device_id(lt7911d, client);
-        if (ret)
-               goto err_clean_entity;
+        // ret = lt7911d_check_device_id(lt7911d, client);
+        // if (ret)
+        //        goto err_clean_entity;
 
 	return 0;
 
