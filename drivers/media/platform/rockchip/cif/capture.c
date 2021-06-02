@@ -150,7 +150,7 @@ static const struct cif_output_fmt out_fmts[] = {
 		.mplanes = 1,
 		.bpp = { 16 },
 		.fmt_type = CIF_FMT_TYPE_RAW,
-	}, {
+	}, */{
 		.fourcc = V4L2_PIX_FMT_BGR666,
 		.cplanes = 1,
 		.mplanes = 1,
@@ -272,7 +272,6 @@ static const struct cif_output_fmt out_fmts[] = {
 		.bpp = {8},
 		.fmt_type = CIF_FMT_TYPE_RAW,
 	}
-	*/
 	/* TODO: We can support NV12M/NV21M/NV16M/NV61M too */
 };
 
