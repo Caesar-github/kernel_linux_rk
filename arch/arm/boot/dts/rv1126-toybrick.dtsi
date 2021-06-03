@@ -265,6 +265,33 @@
 	status = "okay";
 };
 
+&cpu0_opp_table {
+	opp-408000000 {
+		status = "disabled";
+	};
+	opp-600000000 {
+		status = "disabled";
+	};
+	opp-816000000 {
+		status = "disabled";
+	};
+	opp-1008000000 {
+		status = "disabled";
+	};
+	opp-1200000000 {
+		status = "disabled";
+	};
+	opp-1296000000 {
+		status = "disabled";
+	};
+	opp-1416000000 {
+		status = "okay";
+	};
+	opp-1512000000 {
+		status = "disabled";
+	};
+};
+
 &dsi {
 	status = "okay";
 
