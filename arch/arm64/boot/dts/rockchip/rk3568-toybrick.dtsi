@@ -12,6 +12,23 @@
 #include <dt-bindings/sensor-dev.h>
 
 / {
+	board_id: board-id {
+		compatible = "board-id";
+		io-channels = <&saradc 4>;
+		/* Autodect and set board id:
+                 * 1:  0   ~ 100
+                 * 2:  100 ~ 199
+                 * 3:  200 ~ 299
+                 * 4:  300 ~ 399
+                 * 5:  400 ~ 499
+                 * 6:  500 ~ 599
+                 * 7:  600 ~ 699
+                 * 8:  700 ~ 799
+                 * 9:  800 ~ 899
+                 * 10: 900 ~ 1024
+		 */
+		thresholds = <100 200 300 400 500 600 700 800 900>;
+	};
 
 	adc_keys: adc-keys {
 		compatible = "adc-keys";

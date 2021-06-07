@@ -10,3 +10,6 @@
 	compatible = "rockchip,rk3568-toybrick-dev-linux-x0","rockchip,rk3568";
 };
 
+&board_id {
+	custom-id = <0>;
+};
