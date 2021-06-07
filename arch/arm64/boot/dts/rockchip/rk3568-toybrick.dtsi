@@ -20,9 +20,9 @@
 		compatible = "board-id";
 		io-channels = <&saradc 4>;
 		/*
-		 * ID:    adc-value/adc-gpio
+		 * ID:    adc-value/adc-io
 		 * -------------------------
-                 * 0:     adc-gpio is low level
+                 * 0:     adc-io is low level
                  * 1:     0   ~ 100
                  * 2:     100 ~ 199
                  * 3:     200 ~ 299
@@ -34,7 +34,7 @@
                  * 9:     800 ~ 899
                  * 10:    900 ~ 1024
 		 */
-		adc-gpio = <29>; 	// GPIO0_D5
+		adc-io = <29>; 	// GPIO0_D5
 		thresholds = <100 200 300 400 500 600 700 800 900>;
 	};
 
