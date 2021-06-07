@@ -17,7 +17,7 @@ ID_CONFIG=9
 model_arm64=(
 	"TB-RK3568C1-C   TC031C arm64 RK3568    0xff660000 rk3568-toybrick-core-linux       1     Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3568X0     TX0356 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux-x0    0     Image.rockchip  rockchip_linux_defconfig"
-	"TB-RK3568Xs0    TXs356 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux-x0    0     Image.rockchip  rockchip_linux_defconfig"
+	"TB-RK3568Xs0    TXs356 arm64 RK3568    0xff660000 rk3568-toybrick-core-linux       1     Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3568X1-C   TX031C arm64 RK3568    0xff660000 rk3568-toybrick-core-linux-x0    0     Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProD   TD0331 arm64 RK3399Pro 0xff1a0000 rk3399pro-toybrick-prod-linux    0     Image.rockchip  rockchip_linux_defconfig"
 	"TB-RK3399ProDs  TDs331 arm64 RK3399pro 0xff1a0000 rk3399pro-toybrick-prod-linux    0     Image.rockchip  rockchip_linux_defconfig"
@@ -91,27 +91,29 @@ function make_extlinux_conf_one()
 	dtb_name=$3
 	image=$4
 	fs=$5
+	
+	file_path=boot_linux/extlinux
 
 	if [ ${flag} == "none" ]; then
-		src_dtb_file=boot_linux/extlinux/$boot_linux/extlinux/{dtb_name}.dtb
-		src_dtb_file_factory=boot_linux/extlinux/${dtb_name}-factory.dtb
-		dst_dtb_file=boot_linux/extlinux/toybrick.dtb
-		conf_file=boot_linux/extlinux/extlinux.conf
+		src_dtb_file=${dtb_name}.dtb
+		src_dtb_file_factory=${dtb_name}-factory.dtb
+		dst_dtb_file=toybrick.dtb
+		conf_file=${file_path}/extlinux.conf
 	elif [ ${index} -eq -1 ]; then
-		src_dtb_file=boot_linux/extlinux/${dtb_name}.dtb
-		src_dtb_file_factory=boot_linux/extlinux/${dtb_name}-factory.dtb
-		dst_dtb_file=boot_linux/extlinux/toybrick.dtb.${flag}
-		conf_file=boot_linux/extlinux/extlinux.conf.${flag}
+		src_dtb_file=${dtb_name}.dtb
+		src_dtb_file_factory=${dtb_name}-factory.dtb
+		dst_dtb_file=toybrick.dtb.${flag}
+		conf_file=${file_path}/extlinux.conf.${flag}
 	else
-		src_dtb_file=boot_linux/extlinux/${dtb_name}-x${index}.dtb
-		src_dtb_file_factory=boot_linux/extlinux/${dtb_name}-x${index}-factory.dtb
-		dst_dtb_file=boot_linux/extlinux/toybrick.dtb.${flag}.${index}
-		conf_file=boot_linux/extlinux/extlinux.conf.${flag}.${index}
+		src_dtb_file=${dtb_name}-x${index}.dtb
+		src_dtb_file_factory=${dtb_name}-x${index}-factory.dtb
+		dst_dtb_file=toybrick.dtb.${flag}.${index}
+		conf_file=${file_path}/extlinux.conf.${flag}.${index}
 	fi
 
-	cp ${src_dtb_file} ${dst_dtb_file}
-	if [ -f ${src_dtb_file_factory} ]; then
-		cp ${src_dtb_file_factory} ${dst_dtb_file}.factory
+	cp ${file_path}/${src_dtb_file} ${file_path}/${dst_dtb_file}
+	if [ -f ${file_path}/${src_dtb_file_factory} ]; then
+		cp ${file_path}/${src_dtb_file_factory} ${file_path}/${dst_dtb_file}.factory
 	fi
 
 	echo "label rockchip-kernel-4.19" > ${conf_file}
