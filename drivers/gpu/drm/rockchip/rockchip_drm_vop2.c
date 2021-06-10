@@ -140,7 +140,6 @@
 #define VOP2_COLOR_KEY_NONE		(0 << 31)
 #define VOP2_COLOR_KEY_MASK		(1 << 31)
 
-
 enum vop2_data_format {
 	VOP2_FMT_ARGB8888 = 0,
 	VOP2_FMT_RGB888,
@@ -414,6 +413,7 @@ struct vop2_video_port {
 	struct vop2 *vop2;
 	struct clk *dclk;
 	uint8_t id;
+	bool layer_sel_update;
 	const struct vop2_video_port_regs *regs;
 
 	struct completion dsp_hold_completion;
@@ -536,11 +536,13 @@ struct vop2 {
 	struct drm_property *soc_id_prop;
 	struct drm_property *vp_id_prop;
 	struct drm_property *aclk_prop;
+	struct drm_property *bg_prop;
 	struct drm_prop_enum_list *plane_name_list;
 	bool is_iommu_enabled;
 	bool is_iommu_needed;
 	bool is_enabled;
 	bool support_multi_area;
+	bool disable_afbc_win;
 
 	bool loader_protect;
 
@@ -880,31 +882,28 @@ static void vop2_wait_for_irq_handler(struct drm_crtc *crtc)
 	synchronize_irq(vop2->irq);
 }
 
-static bool vop2_fs_raw_status_pending(struct vop2_video_port *vp)
+static bool vop2_vp_done_bit_status(struct vop2_video_port *vp)
 {
 	struct vop2 *vop2 = vp->vop2;
-	uint32_t offset = vp->id * 0x10;
-
-	return vop2_readl(vop2, RK3568_VP0_INT_RAW_STATUS + offset) & 0x20;
-
-}
-
-static void vop2_wait_for_fs_by_raw_status(struct vop2_video_port *vp)
-{
-	struct vop2 *vop2 = vp->vop2;
-	bool pending;
-	int ret;
+	u32 done_bits = vop2_readl(vop2, RK3568_REG_CFG_DONE) & BIT(vp->id);
 
 	/*
-	 * Spin until frame start interrupt raw status bit goes high,
-	 * which means the configuration before the previous config done
-	 * has take effect.
+	 * When done bit is 0, indicate current frame is take effect.
 	 */
-	ret = readx_poll_timeout_atomic(vop2_fs_raw_status_pending, vp, pending,
-					pending, 0, 50 * 1000);
-	if (ret)
-		DRM_DEV_ERROR(vop2->dev, "wait vp%d raw fs statu timeout\n", vp->id);
+	return done_bits == 0 ? true : false;
+}
 
+static void vop2_wait_for_fs_by_done_bit_status(struct vop2_video_port *vp)
+{
+	struct vop2 *vop2 = vp->vop2;
+	bool done_bit;
+	int ret;
+
+	ret = readx_poll_timeout_atomic(vop2_vp_done_bit_status, vp, done_bit,
+					done_bit, 0, 50 * 1000);
+	if (ret)
+		DRM_DEV_ERROR(vop2->dev, "wait vp%d done bit status timeout, vcnt: %d\n",
+			      vp->id, vop2_read_vcnt(vp));
 }
 
 static uint16_t vop2_read_port_mux(struct vop2 *vop2)
@@ -963,7 +962,7 @@ static int32_t vop2_pending_done_bits(struct vop2_video_port *vp)
 			vcnt >>= 1;
 		/* if close to the last 1/8 frame, wait to next frame */
 		if (vcnt > (adjusted_mode->crtc_vtotal * 7 >> 3)) {
-			vop2_wait_for_fs_by_raw_status(done_vp);
+			vop2_wait_for_fs_by_done_bit_status(done_vp);
 			done_bits = 0;
 		}
 	} else { /* exist the other two vp done bit */
@@ -1009,13 +1008,13 @@ static int32_t vop2_pending_done_bits(struct vop2_video_port *vp)
 		else
 			wait_vp = second_done_vp;
 
-		vop2_wait_for_fs_by_raw_status(wait_vp);
+		vop2_wait_for_fs_by_done_bit_status(wait_vp);
 
 		done_bits = vop2_readl(vop2, RK3568_REG_CFG_DONE) & 0x7;
 		if (done_bits) {
 			vp_id = ffs(done_bits) - 1;
 			done_vp = &vop2->vps[vp_id];
-			vop2_wait_for_fs_by_raw_status(done_vp);
+			vop2_wait_for_fs_by_done_bit_status(done_vp);
 		}
 		done_bits = 0;
 	}
@@ -1028,6 +1027,9 @@ static inline void vop2_cfg_done(struct drm_crtc *crtc)
 	struct vop2 *vop2 = vp->vop2;
 	uint32_t done_bits;
 	uint32_t val;
+	u32 old_layer_sel_val, cfg_layer_sel_val;
+	struct vop2_layer *layer = &vop2->layers[0];
+	u32 layer_sel_offset = layer->regs->layer_sel.offset;
 
 	/*
 	 * This is a workaround, the config done bits of VP0,
@@ -1047,7 +1049,23 @@ static inline void vop2_cfg_done(struct drm_crtc *crtc)
 	 */
 	done_bits = vop2_pending_done_bits(vp);
 	val = RK3568_VOP2_GLB_CFG_DONE_EN | BIT(vp->id) | done_bits;
+	old_layer_sel_val = vop2_readl(vop2, layer_sel_offset);
+	cfg_layer_sel_val = vop2->regsbak[layer_sel_offset >> 2];
+	/**
+	 * This is rather low probability for miss some done bit.
+	 */
+	val |= vop2_readl(vop2, RK3568_REG_CFG_DONE) & 0x7;
 	vop2_writel(vop2, 0, val);
+
+	/**
+	 * Make sure the layer sel is take effect when it's updated.
+	 */
+	if (old_layer_sel_val != cfg_layer_sel_val) {
+		vp->layer_sel_update = true;
+		vop2_wait_for_fs_by_done_bit_status(vp);
+		DRM_DEV_DEBUG(vop2->dev, "vp%d need to wait fs as old layer_sel val[0x%x] != new val[0x%x]\n",
+			      vp->id, old_layer_sel_val, cfg_layer_sel_val);
+	}
 }
 
 static inline void vop2_wb_cfg_done(struct vop2_video_port *vp)
@@ -1703,18 +1721,21 @@ static void vop2_disable_all_planes_for_crtc(struct drm_crtc *crtc)
 	struct vop2_win *win;
 	unsigned long win_mask = vp->win_mask;
 	int phys_id, ret;
-	bool active;
-
+	bool active, need_wait_win_disabled = false;
 
 	for_each_set_bit(phys_id, &win_mask, ROCKCHIP_MAX_LAYER) {
 		win = vop2_find_win_by_phys_id(vop2, phys_id);
+		need_wait_win_disabled |= VOP_WIN_GET(vop2, win, enable);
 		vop2_win_disable(win);
 	}
-	vop2_cfg_done(crtc);
-	ret = readx_poll_timeout_atomic(vop2_is_allwin_disabled, crtc,
-					active, active, 0, 500 * 1000);
-	if (ret)
-		DRM_DEV_ERROR(vop2->dev, "wait win close timeout\n");
+
+	if (need_wait_win_disabled) {
+		vop2_cfg_done(crtc);
+		ret = readx_poll_timeout_atomic(vop2_is_allwin_disabled, crtc,
+						active, active, 0, 500 * 1000);
+		if (ret)
+			DRM_DEV_ERROR(vop2->dev, "wait win close timeout\n");
+	}
 }
 
 /*
@@ -1766,10 +1787,26 @@ static void vop2_setup_csc_mode(struct vop2_video_port *vp,
 
 	/* hdr2sdr and sdr2hdr will do csc itself */
 	if (vpstate->hdr2sdr_en) {
-	/* This is hdr2sdr enabled plane */
+		/*
+		 * This is hdr2sdr enabled plane
+		 * If it's RGB layer do hdr2sdr, we need to do r2y before send to hdr2sdr,
+		 * because hdr2sdr only support yuv input.
+		 */
+		if (!is_input_yuv) {
+			vpstate->r2y_en = 1;
+			vpstate->csc_mode = vop2_convert_csc_mode(output_csc);
+		}
 		return;
 	} else if (!vpstate->hdr_in && vp->sdr2hdr_en) {
-	/* This is sdr2hdr enabled plane */
+		/*
+		 * This is sdr2hdr enabled plane
+		 * If it's YUV layer do sdr2hdr, we need to do y2r before send to sdr2hdr,
+		 * because sdr2hdr only support rgb input.
+		 */
+		if (is_input_yuv) {
+			vpstate->y2r_en = 1;
+			vpstate->csc_mode = vop2_convert_csc_mode(input_csc);
+		}
 		return;
 	}
 
@@ -2599,6 +2636,7 @@ static void vop2_crtc_atomic_disable(struct drm_crtc *crtc,
 
 	WARN_ON(vp->event);
 	vop2_lock(vop2);
+	DRM_DEV_INFO(vop2->dev, "Crtc atomic disable vp%d\n", vp->id);
 	drm_crtc_vblank_off(crtc);
 	vop2_disable_all_planes_for_crtc(crtc);
 
@@ -2863,7 +2901,7 @@ static void vop2_plane_setup_color_key(struct drm_plane *plane)
 		break;
 	}
 
-	color_key = (r << 20) || (g << 10) || b;
+	color_key = (r << 20) | (g << 10) | b;
 	VOP_WIN_SET(vop2, win, color_key_en, color_key_en);
 	VOP_WIN_SET(vop2, win, color_key, color_key);
 }
@@ -2894,6 +2932,7 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 	uint32_t lb_mode;
 	uint32_t stride;
 	uint32_t transform_offset;
+	struct drm_format_name_buf format_name;
 
 #if defined(CONFIG_ROCKCHIP_DRM_DEBUG)
 	bool AFBC_flag = false;
@@ -2949,14 +2988,14 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 	actual_h = drm_rect_height(src) >> 16;
 	dsp_w = drm_rect_width(dest);
 	if (dest->x1 + dsp_w > adjusted_mode->hdisplay) {
-		DRM_ERROR("%s dest->x1[%d] + dsp_w[%d] exceed mode hdisplay[%d]\n",
-			  win->name, dest->x1, dsp_w, adjusted_mode->hdisplay);
+		DRM_ERROR("vp%d %s dest->x1[%d] + dsp_w[%d] exceed mode hdisplay[%d]\n",
+			  vp->id, win->name, dest->x1, dsp_w, adjusted_mode->hdisplay);
 		dsp_w = adjusted_mode->hdisplay - dest->x1;
 	}
 	dsp_h = drm_rect_height(dest);
 	if (dest->y1 + dsp_h > adjusted_mode->vdisplay) {
-		DRM_ERROR("%s dest->y1[%d] + dsp_h[%d] exceed mode vdisplay[%d]\n",
-			  win->name, dest->y1, dsp_h, adjusted_mode->vdisplay);
+		DRM_ERROR("vp%d %s dest->y1[%d] + dsp_h[%d] exceed mode vdisplay[%d]\n",
+			  vp->id, win->name, dest->y1, dsp_h, adjusted_mode->vdisplay);
 		dsp_h = adjusted_mode->vdisplay - dest->y1;
 	}
 
@@ -2966,14 +3005,14 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 	 */
 	if (!(win->feature & WIN_FEATURE_AFBDC)) {
 		if (actual_w > dsp_w && (actual_w & 0xf) == 1) {
-			DRM_WARN("%s act_w[%d] MODE 16 == 1\n", win->name, actual_w);
+			DRM_WARN("vp%d %s act_w[%d] MODE 16 == 1\n", vp->id, win->name, actual_w);
 			actual_w -= 1;
 		}
 	}
 
 	if (vpstate->afbc_en && actual_w % 4) {
-		DRM_ERROR("%s actual_w[%d] should align as 4 pixel when enable afbc\n",
-			  win->name, actual_w);
+		DRM_ERROR("vp%d %s actual_w[%d] should align as 4 pixel when enable afbc\n",
+			  vp->id, win->name, actual_w);
 		actual_w = ALIGN_DOWN(actual_w, 4);
 	}
 
@@ -2989,6 +3028,11 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 	vop2_setup_csc_mode(vp, vpstate);
 
 	spin_lock(&vop2->reg_lock);
+	DRM_DEV_DEBUG(vop2->dev, "vp%d update %s[%dx%d->%dx%d@%dx%d] fmt[%.4s_%s] addr[%pad]\n",
+		      vp->id, win->name, actual_w, actual_h, dsp_w, dsp_h,
+		      dsp_stx, dsp_sty,
+		      drm_get_format_name(fb->format->format, &format_name),
+		      vpstate->afbc_en ? "AFBC" : "", &vpstate->yrgb_mst);
 
 	if (vpstate->afbc_en) {
 		/* the afbc superblock is 16 x 16 */
@@ -3003,8 +3047,8 @@ static void vop2_plane_atomic_update(struct drm_plane *plane, struct drm_plane_s
 		stride = (fb->pitches[0] << 3) / bpp;
 		if ((stride & 0x3f) &&
 		    (vpstate->xmirror_en || vpstate->rotate_90_en || vpstate->rotate_270_en))
-			DRM_ERROR("%s stride[%d] must align as 64 pixel when enable xmirror/rotate_90/rotate_270[0x%x]\n",
-				  win->name, stride, pstate->rotation);
+			DRM_ERROR("vp%d %s stride[%d] must align as 64 pixel when enable xmirror/rotate_90/rotate_270[0x%x]\n",
+				  vp->id, win->name, stride, pstate->rotation);
 
 		rb_swap = vop2_afbc_rb_swap(fb->format->format);
 		uv_swap = vop2_afbc_uv_swap(fb->format->format);
@@ -4359,7 +4403,10 @@ static void vop2_setup_hdr10(struct vop2_video_port *vp, uint8_t win_phys_id)
 	bool sdr2hdr_en = 0;
 	bool sdr2hdr_tf = 0;
 	bool hdr2sdr_tf_update = 1;
-	bool sdr2hdr_tf_update = 0;
+	bool sdr2hdr_tf_update = 0; /* default sdr2hdr curve is 1000 nit */
+	unsigned long win_mask = vp->win_mask;
+	int phys_id;
+	bool have_sdr_layer = false;
 
 	/*
 	 * Check whether this video port support hdr or not
@@ -4385,17 +4432,35 @@ static void vop2_setup_hdr10(struct vop2_video_port *vp, uint8_t win_phys_id)
 	 */
 	if (vp->hdr_in && !vp->hdr_out)
 		hdr2sdr_en = 1;
-
-	if (vp->hdr_out && (vp->nr_layers > 1))
-		sdr2hdr_en = 1;
-
-	vp->sdr2hdr_en = sdr2hdr_en;
 	vpstate->hdr_in = hdr_en;
 	vpstate->hdr2sdr_en = hdr2sdr_en;
 
+	/*
+	 * To confirm whether need to enable sdr2hdr.
+	 */
+	for_each_set_bit(phys_id, &win_mask, ROCKCHIP_MAX_LAYER) {
+		win = vop2_find_win_by_phys_id(vop2, phys_id);
+		plane = &win->base;
+		pstate = plane->state;
+		vpstate = to_vop2_plane_state(pstate);
+
+		/* skip inactive plane */
+		if (!pstate || !pstate->fb)
+			continue;
+
+		if (vpstate->eotf != SMPTE_ST2084) {
+			have_sdr_layer = true;
+			break;
+		}
+	}
+
+	if (have_sdr_layer && vp->hdr_out)
+		sdr2hdr_en = 1;
+	vp->sdr2hdr_en = sdr2hdr_en;
+
 	if (sdr2hdr_en) {
 		sdr2hdr_r2r_mode = BT709_TO_BT2020;
-		if (vp->hdr_in)
+		if (vp->hdr_out)
 			sdr2hdr_tf = SDR2HDR_FOR_HDR;
 		else
 			sdr2hdr_tf = SDR2HDR_FOR_BT2020;
@@ -4883,8 +4948,8 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_crtc_state 
 		main_win->two_win_mode = true;
 		vop2_setup_cluster_alpha(vop2, &cluster);
 		if (abs(main_win->base.state->zpos - win->base.state->zpos) != 1)
-			DRM_ERROR("Cluster%d win0[zpos:%d] must next to win1[zpos:%d]\n",
-				  cluster.main->phys_id,
+			DRM_ERROR("vp%d Cluster%d win0[zpos:%d] must next to win1[zpos:%d]\n",
+				  vp->id, cluster.main->phys_id,
 				  main_win->base.state->zpos, win->base.state->zpos);
 	}
 
@@ -4920,8 +4985,8 @@ static void vop2_crtc_atomic_begin(struct drm_crtc *crtc, struct drm_crtc_state 
 
 		sort(vop2_zpos, nr_layers, sizeof(vop2_zpos[0]), vop2_zpos_cmp, NULL);
 
-		vop2_setup_hdr10(vp, vop2_zpos[0].win_phys_id);
 		vop2_setup_layer_mixer_for_vp(vp, vop2_zpos);
+		vop2_setup_hdr10(vp, vop2_zpos[0].win_phys_id);
 		vop2_setup_alpha(vp, vop2_zpos);
 		vop2_setup_dly_for_vp(vp);
 		vop2_setup_dly_for_window(vp, vop2_zpos);
@@ -5040,15 +5105,30 @@ static void vop2_cfg_update(struct drm_crtc *crtc,
 	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(crtc->state);
 	struct vop2 *vop2 = vp->vop2;
 	uint32_t val;
+	uint32_t r, g, b;
 
 	spin_lock(&vop2->reg_lock);
 
 	VOP_MODULE_SET(vop2, vp, overlay_mode, vcstate->yuv_overlay);
 
-	if (vcstate->yuv_overlay)
-		val = 0x20010200;
-	else
-		val = 0;
+	/*
+	 * userspace specified background.
+	 */
+	if (vcstate->background) {
+		r = (vcstate->background & 0xff0000) >> 16;
+		g = (vcstate->background & 0xff00) >> 8;
+		b = (vcstate->background & 0xff);
+		r <<= 2;
+		g <<= 2;
+		b <<= 2;
+		val = (r << 20) | (g << 10) | b;
+	} else {
+		if (vcstate->yuv_overlay)
+			val = 0x20010200;
+		else
+			val = 0;
+	}
+
 	VOP_MODULE_SET(vop2, vp, dsp_background, val);
 
 	vop2_tv_config_update(crtc, old_crtc_state);
@@ -5079,7 +5159,7 @@ static void vop2_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_crtc_state 
 		if (ret) {
 			vop2->is_iommu_enabled = false;
 			vop2_disable_all_planes_for_crtc(crtc);
-			DRM_DEV_ERROR(vop2->dev, "failed to attach dma mapping, %d\n", ret);
+			DRM_DEV_ERROR(vop2->dev, "vp%d failed to attach dma mapping, %d\n", vp->id, ret);
 		} else {
 			vop2->is_iommu_enabled = true;
 			VOP_CTRL_SET(vop2, dma_stop, 0);
@@ -5115,6 +5195,12 @@ static void vop2_crtc_atomic_flush(struct drm_crtc *crtc, struct drm_crtc_state 
 	 * signalling flip completion we need to wait for it to finish.
 	 */
 	vop2_wait_for_irq_handler(crtc);
+
+	/**
+	 * move here is to make sure current fs call function is complete,
+	 * so when layer_sel_update is true, we can skip current vblank correctly.
+	 */
+	vp->layer_sel_update = false;
 
 	spin_lock_irq(&crtc->dev->event_lock);
 	if (crtc->state->event) {
@@ -5173,6 +5259,7 @@ static void vop2_crtc_reset(struct drm_crtc *crtc)
 	vcstate->right_margin = 100;
 	vcstate->top_margin = 100;
 	vcstate->bottom_margin = 100;
+	vcstate->background = 0;
 }
 
 static struct drm_crtc_state *vop2_crtc_duplicate_state(struct drm_crtc *crtc)
@@ -5305,7 +5392,14 @@ static int vop2_crtc_atomic_get_property(struct drm_crtc *crtc,
 		return 0;
 	}
 
-	DRM_ERROR("failed to get vop2 crtc property\n");
+
+	if (property == vop2->bg_prop) {
+		*val = vcstate->background;
+		return 0;
+	}
+
+	DRM_ERROR("failed to get vop2 crtc property: %s\n", property->name);
+
 	return -EINVAL;
 }
 
@@ -5315,8 +5409,10 @@ static int vop2_crtc_atomic_set_property(struct drm_crtc *crtc,
 					 uint64_t val)
 {
 	struct drm_device *drm_dev = crtc->dev;
-	struct drm_mode_config *mode_config = &drm_dev->mode_config;
 	struct rockchip_crtc_state *vcstate = to_rockchip_crtc_state(state);
+	struct drm_mode_config *mode_config = &drm_dev->mode_config;
+	struct vop2_video_port *vp = to_vop2_video_port(crtc);
+	struct vop2 *vop2 = vp->vop2;
 
 	if (property == mode_config->tv_left_margin_property) {
 		vcstate->left_margin = val;
@@ -5338,7 +5434,14 @@ static int vop2_crtc_atomic_set_property(struct drm_crtc *crtc,
 		return 0;
 	}
 
-	DRM_ERROR("failed to set vop2 crtc property\n");
+
+	if (property == vop2->bg_prop) {
+		vcstate->background = val;
+		return 0;
+	}
+
+	DRM_ERROR("failed to set vop2 crtc property %s\n", property->name);
+
 	return -EINVAL;
 }
 
@@ -5516,8 +5619,10 @@ static irqreturn_t vop2_isr(int irq, void *data)
 
 		if (active_irqs & FS_FIELD_INTR) {
 			vop2_wb_handler(vp);
-			drm_crtc_handle_vblank(crtc);
-			vop2_handle_vblank(vop2, crtc);
+			if (vp->layer_sel_update == false) {
+				drm_crtc_handle_vblank(crtc);
+				vop2_handle_vblank(vop2, crtc);
+			}
 			active_irqs &= ~FS_FIELD_INTR;
 			ret = IRQ_HANDLED;
 		}
@@ -5609,6 +5714,11 @@ static int vop2_plane_init(struct vop2 *vop2, struct vop2_win *win, unsigned lon
 				  BIT(DRM_MODE_BLEND_COVERAGE);
 	unsigned int max_width, max_height;
 	int ret;
+
+	if (win->feature & WIN_FEATURE_AFBDC) {
+		if (vop2->disable_afbc_win)
+			return 0;
+	}
 
 	ret = drm_universal_plane_init(vop2->drm_dev, &win->base, possible_crtcs,
 				       &vop2_plane_funcs, win->formats, win->nformats,
@@ -5903,6 +6013,7 @@ static int vop2_create_crtc(struct vop2 *vop2)
 		drm_object_attach_property(&crtc->base, vop2->soc_id_prop, soc_id);
 		drm_object_attach_property(&crtc->base, vop2->vp_id_prop, vp->id);
 		drm_object_attach_property(&crtc->base, vop2->aclk_prop, 0);
+		drm_object_attach_property(&crtc->base, vop2->bg_prop, 0);
 		drm_object_attach_property(&crtc->base,
 					   drm_dev->mode_config.tv_left_margin_property, 100);
 		drm_object_attach_property(&crtc->base,
@@ -6081,8 +6192,9 @@ static int vop2_win_init(struct vop2 *vop2)
 	vop2->vp_id_prop = prop;
 
 	vop2->aclk_prop = drm_property_create_range(vop2->drm_dev, 0, "ACLK", 0, UINT_MAX);
+	vop2->bg_prop = drm_property_create_range(vop2->drm_dev, 0, "BACKGROUND", 0, UINT_MAX);
 
-	if (!vop2->soc_id_prop || !vop2->vp_id_prop || !vop2->aclk_prop) {
+	if (!vop2->soc_id_prop || !vop2->vp_id_prop || !vop2->aclk_prop || !vop2->bg_prop) {
 		DRM_DEV_ERROR(vop2->dev, "failed to create soc_id/vp_id/aclk property\n");
 		return -ENOMEM;
 	}
@@ -6126,6 +6238,7 @@ static int vop2_bind(struct device *dev, struct device *master, void *data)
 	dev_set_drvdata(dev, vop2);
 
 	vop2->support_multi_area = of_property_read_bool(dev->of_node, "support-multi-area");
+	vop2->disable_afbc_win = of_property_read_bool(dev->of_node, "disable-afbc-win");
 
 	ret = vop2_win_init(vop2);
 	if (ret)

@@ -348,6 +348,16 @@ config VIDEO_DW9714
 	  capability. This is designed for linear control of
 	  voice coil motors, controlled via I2C serial interface.
 
+config VIDEO_DW9718
+	tristate "DW9718 lens voice coil support"
+	depends on I2C && VIDEO_V4L2 && MEDIA_CONTROLLER
+	depends on VIDEO_V4L2_SUBDEV_API
+	---help---
+	  This is a driver for the DW9718 camera lens voice coil.
+	  DW9718 is a 10 bit DAC with 100mA output current sink
+	  capability. This is designed for linear control of
+	  voice coil motors, controlled via I2C serial interface.
+
 config VIDEO_DW9807_VCM
 	tristate "DW9807 lens voice coil support"
 	depends on I2C && VIDEO_V4L2 && MEDIA_CONTROLLER
@@ -651,6 +661,17 @@ config VIDEO_APTINA_PLL
 config VIDEO_SMIAPP_PLL
 	tristate
 
+config VIDEO_IMX178
+	tristate "Sony IMX178 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	help
+	  This is a Video4Linux2 sensor driver for the Sony
+	  IMX178 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called imx178.
+
 config VIDEO_IMX219
 	tristate "Sony IMX219 sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -789,6 +810,17 @@ config VIDEO_IMX415
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called imx415.
+
+config VIDEO_IMX462
+	tristate "Sony IMX462 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	help
+	  This is a Video4Linux2 sensor driver for the Sony
+	  IMX462 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called imx462.
 
 config VIDEO_IMX464
 	tristate "Sony IMX464 sensor support"
@@ -1667,6 +1699,17 @@ config VIDEO_SC031GS
 	  To compile this driver as a module, choose M here: the
 	  module will be called sc031gs.
 
+config VIDEO_SC035HGS
+	tristate "SmartSens SC035HGS sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SmartSens SC035HGS sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sc035hgs.
+
 config VIDEO_SC132GS
 	tristate "SmartSens SC132GS sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1733,6 +1776,17 @@ config VIDEO_SC2310
 	  To compile this driver as a module, choose M here: the
 	  module will be called sc2310.
 
+config VIDEO_SC2335
+	tristate "SmartSens SC2335 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SmartSens SC2335 sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sc2335.
+
 config VIDEO_SC401AI
 	tristate "SmartSens SC401AI sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1777,6 +1831,17 @@ config VIDEO_SC500AI
 	  To compile this driver as a module, choose M here: the
 	  module will be called SC500AI.
 
+config VIDEO_SC8220
+	tristate "SmartSens SC8220 sensor support"
+	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  Support for the SmartSens SC8220 sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called SC8220.
+
 config VIDEO_SP250A
 	tristate "Superpix SP250A sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -1787,6 +1852,30 @@ config VIDEO_SP250A
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called SP250A.
+
+config VIDEO_HYNIX_HI556
+	tristate "Hynix HI556 sensor support"
+	depends on VIDEO_V4L2 && I2C && MEDIA_CONTROLLER
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the Hynix
+	  HI556 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hynix_hi556.
+
+config VIDEO_HYNIX_HI846
+	tristate "Hynix HI846 sensor support"
+	depends on VIDEO_V4L2 && I2C && MEDIA_CONTROLLER
+	depends on MEDIA_CAMERA_SUPPORT
+	select V4L2_FWNODE
+	help
+	  This is a Video4Linux2 sensor driver for the Hynix
+	  HI846 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called hynix_hi846.
 
 comment "Flash devices"
 

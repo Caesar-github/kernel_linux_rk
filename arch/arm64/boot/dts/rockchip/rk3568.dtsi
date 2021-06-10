@@ -132,15 +132,29 @@
 		compatible = "operating-points-v2";
 		opp-shared;
 
+		mbist-vmin = <825000 900000 950000>;
+		nvmem-cells = <&cpu_leakage>, <&core_pvtm>, <&mbist_vmin>;
+		nvmem-cell-names = "leakage", "pvtm", "mbist-vmin";
+		rockchip,pvtm-voltage-sel = <
+			0        82000   0
+			82001    93000   1
+			93001    100000  2
+		>;
+		rockchip,pvtm-freq = <408000>;
+		rockchip,pvtm-volt = <900000>;
+		rockchip,pvtm-ch = <0 5>;
+		rockchip,pvtm-sample-time = <1000>;
+		rockchip,pvtm-number = <10>;
+		rockchip,pvtm-error = <1000>;
+		rockchip,pvtm-ref-temp = <40>;
+		rockchip,pvtm-temp-prop = <26 26>;
+		rockchip,thermal-zone = "soc-thermal";
 		rockchip,temp-hysteresis = <5000>;
 		rockchip,low-temp = <0>;
 		rockchip,low-temp-adjust-volt = <
 			/* MHz    MHz    uV */
-			1104      1608   75000
+			   0      1608   75000
 		>;
-
-		nvmem-cells = <&cpu_leakage>;
-		nvmem-cell-names = "leakage";
 
 		opp-408000000 {
 			opp-hz = /bits/ 64 <408000000>;
@@ -205,6 +219,7 @@
 		memory-region = <&drm_logo>, <&drm_cubic_lut>;
 		memory-region-names = "drm-logo", "drm-cubic-lut";
 		ports = <&vop_out>;
+		devfreq = <&dmc>;
 
 		route {
 			route_dsi0: route-dsi0 {
@@ -1067,15 +1082,15 @@
 	npu_opp_table: npu-opp-table {
 		compatible = "operating-points-v2";
 
+		mbist-vmin = <825000 900000 950000>;
+		nvmem-cells = <&npu_leakage>, <&core_pvtm>, <&mbist_vmin>;
+		nvmem-cell-names = "leakage", "pvtm", "mbist-vmin";
 		rockchip,temp-hysteresis = <5000>;
 		rockchip,low-temp = <0>;
 		rockchip,low-temp-adjust-volt = <
 			/* MHz    MHz    uV */
-			700       700    50000
+			   0      700    50000
 		>;
-
-		nvmem-cells = <&npu_leakage>;
-		nvmem-cell-names = "leakage";
 
 		opp-200000000 {
 			opp-hz = /bits/ 64 <200000000>;
@@ -1108,6 +1123,42 @@
 		opp-1000000000 {
 			opp-hz = /bits/ 64 <1000000000>;
 			opp-microvolt = <1000000 1000000 1000000>;
+			status = "disabled";
+		};
+	};
+
+	bus_npu: bus-npu {
+		compatible = "rockchip,rk3568-bus";
+		rockchip,busfreq-policy = "clkfreq";
+		clocks = <&scmi_clk 2>;
+		clock-names = "bus";
+		operating-points-v2 = <&bus_npu_opp_table>;
+		status = "disabled";
+	};
+
+	bus_npu_opp_table: bus-npu-opp-table {
+		compatible = "operating-points-v2";
+		opp-shared;
+
+		nvmem-cells = <&core_pvtm>;
+		nvmem-cell-names = "pvtm";
+		rockchip,pvtm-voltage-sel = <
+			0        82000   0
+			82001    93000   1
+			93001    100000  2
+		>;
+		rockchip,pvtm-ch = <0 5>;
+
+		opp-1000000000 {
+			opp-hz = /bits/ 64 <1000000000>;
+			opp-microvolt = <950000>;
+			opp-microvolt-L0 = <950000>;
+			opp-microvolt-L1 = <925000>;
+			opp-microvolt-L2 = <0>;
+		};
+		opp-900000000 {
+			opp-hz = /bits/ 64 <900000000>;
+			opp-microvolt = <0>;
 		};
 	};
 
@@ -1156,8 +1207,9 @@
 	gpu_opp_table: opp-table2 {
 		compatible = "operating-points-v2";
 
-		nvmem-cells = <&gpu_leakage>;
-		nvmem-cell-names = "leakage";
+		mbist-vmin = <825000 900000 950000>;
+		nvmem-cells = <&gpu_leakage>, <&core_pvtm>, <&mbist_vmin>;
+		nvmem-cell-names = "leakage", "pvtm", "mbist-vmin";
 
 		opp-200000000 {
 			opp-hz = /bits/ 64 <200000000>;
@@ -1274,7 +1326,7 @@
 		interrupts = <GIC_SPI 62 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&cru ACLK_JDEC>, <&cru HCLK_JDEC>;
 		clock-names = "aclk_vcodec", "hclk_vcodec";
-		rockchip,normal-rates = <297000000>, <0>;
+		rockchip,disable-auto-freq;
 		resets = <&cru SRST_A_JDEC>, <&cru SRST_H_JDEC>;
 		reset-names = "video_a", "video_h";
 		iommus = <&jpegd_mmu>;
@@ -1303,7 +1355,7 @@
 		interrupts = <GIC_SPI 64 IRQ_TYPE_LEVEL_HIGH>;
 		clocks = <&cru ACLK_JENC>, <&cru HCLK_JENC>;
 		clock-names = "aclk_vcodec", "hclk_vcodec";
-		rockchip,normal-rates = <297000000>, <0>;
+		rockchip,disable-auto-freq;
 		resets = <&cru SRST_A_JENC>, <&cru SRST_H_JENC>;
 		reset-names = "video_a", "video_h";
 		iommus = <&vepu_mmu>;
@@ -1373,7 +1425,7 @@
 		clocks = <&cru ACLK_RKVENC>, <&cru HCLK_RKVENC>,
 			<&cru CLK_RKVENC_CORE>;
 		clock-names = "aclk_vcodec", "hclk_vcodec", "clk_core";
-		rockchip,normal-rates = <297000000>, <0>, <400000000>;
+		rockchip,normal-rates = <297000000>, <0>, <297000000>;
 		resets = <&cru SRST_A_RKVENC>, <&cru SRST_H_RKVENC>,
 			<&cru SRST_RKVENC_CORE>;
 		reset-names = "video_a", "video_h", "video_core";
@@ -1385,7 +1437,36 @@
 		rockchip,taskqueue-node = <3>;
 		rockchip,resetgroup-node = <3>;
 		power-domains = <&power RK3568_PD_RKVENC>;
+		operating-points-v2 = <&rkvenc_opp_table>;
 		status = "disabled";
+	};
+
+	rkvenc_opp_table: rkvenc-opp-table {
+		compatible = "operating-points-v2";
+
+		nvmem-cells = <&core_pvtm>;
+		nvmem-cell-names = "pvtm";
+		rockchip,pvtm-voltage-sel = <
+			0        82000   0
+			82001    93000   1
+			93001    100000  2
+		>;
+		rockchip,pvtm-ch = <0 5>;
+
+		opp-297000000 {
+			opp-hz = /bits/ 64 <297000000>;
+			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <900000>;
+			opp-microvolt-L2 = <850000>;
+		};
+		opp-400000000 {
+			opp-hz = /bits/ 64 <400000000>;
+			opp-microvolt = <950000>;
+			opp-microvolt-L0 = <950000>;
+			opp-microvolt-L1 = <900000>;
+			opp-microvolt-L2 = <850000>;
+		};
 	};
 
 	rkvenc_mmu: iommu@fdf40f00 {
@@ -1434,6 +1515,7 @@
 		rockchip,sram = <&rkvdec_sram>;
 		/* rcb_iova: start and size */
 		rockchip,rcb-iova = <0x10000000 65536>;
+		rockchip,rcb-min-width = <512>;
 		status = "disabled";
 	};
 
@@ -1544,7 +1626,7 @@
 	};
 
 	rkisp_mmu: iommu@fdff1a00 {
-		compatible = "rockchip,iommu";
+		compatible = "rockchip,iommu-v2";
 		reg = <0x0 0xfdff1a00 0x0 0x100>;
 		interrupts = <GIC_SPI 59 IRQ_TYPE_LEVEL_HIGH>;
 		interrupt-names = "isp_mmu";
@@ -2047,6 +2129,11 @@
 		clock-names = "dmc_clk";
 		operating-points-v2 = <&dmc_opp_table>;
 		ddr_timing = <&ddr_timing>;
+		vop-bw-dmc-freq = <
+		/* min_bw(MB/s) max_bw(MB/s) freq(KHz) */
+			0	505	324000
+			506	99999	528000
+		>;
 		upthreshold = <40>;
 		downdifferential = <20>;
 		system-status-freq = <
@@ -2070,33 +2157,50 @@
 	dmc_opp_table: dmc-opp-table {
 		compatible = "operating-points-v2";
 
+		mbist-vmin = <825000 900000 950000>;
+		nvmem-cells = <&log_leakage>, <&core_pvtm>, <&mbist_vmin>;
+		nvmem-cell-names = "leakage", "pvtm", "mbist-vmin";
 		rockchip,temp-hysteresis = <5000>;
 		rockchip,low-temp = <0>;
 		rockchip,low-temp-adjust-volt = <
 			/* MHz    MHz    uV */
-			0         1560   25000
+			   0      1560   25000
+		>;
+		rockchip,leakage-voltage-sel = <
+			1   80    0
+			81  254   1
 		>;
 
 		opp-324000000 {
 			opp-hz = /bits/ 64 <324000000>;
 			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <850000>;
 		};
 		opp-528000000 {
 			opp-hz = /bits/ 64 <528000000>;
 			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <850000>;
 		};
 		opp-780000000 {
 			opp-hz = /bits/ 64 <780000000>;
 			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <850000>;
 		};
 		opp-920000000 {
 			opp-hz = /bits/ 64 <920000000>;
 			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <850000>;
 			status = "disabled";
 		};
 		opp-1560000000 {
 			opp-hz = /bits/ 64 <1560000000>;
 			opp-microvolt = <900000>;
+			opp-microvolt-L0 = <900000>;
+			opp-microvolt-L1 = <850000>;
 		};
 	};
 
@@ -2370,6 +2474,20 @@
 		status = "disabled";
 	};
 
+	crypto: crypto@fe380000 {
+		compatible = "rockchip,rk3568-crypto";
+		reg = <0x0 0xfe380000 0x0 0x4000>;
+		interrupts = <GIC_SPI 4 IRQ_TYPE_LEVEL_HIGH>;
+		clocks = <&cru ACLK_CRYPTO_NS>, <&cru HCLK_CRYPTO_NS>,
+			<&cru CLK_CRYPTO_NS_CORE>, <&cru CLK_CRYPTO_NS_PKA>;
+		clock-names = "aclk", "hclk", "sclk", "apb_pclk";
+		assigned-clocks = <&cru CLK_CRYPTO_NS_CORE>;
+		assigned-clock-rates = <200000000>;
+		resets = <&cru SRST_CRYPTO_NS_CORE>;
+		reset-names = "crypto-rst";
+		status = "disabled";
+	};
+
 	rng: rng@fe388000 {
 		compatible = "rockchip,cryptov2-rng";
 		reg = <0x0 0xfe388000 0x0 0x2000>;
@@ -2399,6 +2517,10 @@
 			reg = <0x08 0x1>;
 			bits = <3 3>;
 		};
+		mbist_vmin: mbist-vmin@9 {
+			reg = <0x09 0x1>;
+			bits = <0 4>;
+		};
 		otp_id: id@a {
 			reg = <0x0a 0x10>;
 		};
@@ -2413,6 +2535,9 @@
 		};
 		gpu_leakage: gpu-leakage@1d {
 			reg = <0x1d 0x1>;
+		};
+		core_pvtm:core-pvtm@2a {
+			reg = <0x2a 0x2>;
 		};
 	};
 
@@ -3116,7 +3241,7 @@
 			 <&cru PCLK_PIPE>;
 		clock-names = "refclk", "apbclk", "pipe_clk";
 		assigned-clocks = <&pmucru CLK_PCIEPHY0_REF>;
-		assigned-clock-rates = <24000000>;
+		assigned-clock-rates = <100000000>;
 		resets = <&cru SRST_P_PIPEPHY0>, <&cru SRST_PIPEPHY0>;
 		reset-names = "combphy-apb", "combphy";
 		rockchip,pipe-grf = <&pipegrf>;
@@ -3132,7 +3257,7 @@
 			 <&cru PCLK_PIPE>;
 		clock-names = "refclk", "apbclk", "pipe_clk";
 		assigned-clocks = <&pmucru CLK_PCIEPHY1_REF>;
-		assigned-clock-rates = <24000000>;
+		assigned-clock-rates = <100000000>;
 		resets = <&cru SRST_P_PIPEPHY1>, <&cru SRST_PIPEPHY1>;
 		reset-names = "combphy-apb", "combphy";
 		rockchip,pipe-grf = <&pipegrf>;

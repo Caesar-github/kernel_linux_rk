@@ -493,7 +493,7 @@ static void rkisp_buf_queue(struct vb2_buffer *vb)
 
 	memset(ispbuf->buff_addr, 0, sizeof(ispbuf->buff_addr));
 	for (i = 0; i < isp_fmt->mplanes; i++) {
-		if (stream->ispdev->hw_dev->is_mmu) {
+		if (stream->ispdev->hw_dev->is_dma_sg_ops) {
 			sgt = vb2_dma_sg_plane_desc(vb, i);
 			ispbuf->buff_addr[i] = sg_dma_address(sgt->sgl);
 		} else {
@@ -971,7 +971,7 @@ void rkisp_rawrd_set_pic_size(struct rkisp_device *dev,
 	if (dev->isp_ver == ISP_V20 &&
 	    sdev->in_fmt.fmt_type == FMT_BAYER &&
 	    sdev->out_fmt.fmt_type != FMT_BAYER &&
-	    dev->csi_dev.rd_mode == HDR_RDBK_FRAME1)
+	    dev->rd_mode == HDR_RDBK_FRAME1)
 		height += RKMODULE_EXTEND_LINE;
 
 	rkisp_write(dev, CSI2RX_RAW_RD_PIC_SIZE, height << 16 | width, false);
@@ -990,7 +990,7 @@ void rkisp_dmarx_get_frame(struct rkisp_device *dev, u32 *id,
 		return;
 	}
 
-	spin_lock_irqsave(&dev->csi_dev.rdbk_lock, flag);
+	spin_lock_irqsave(&dev->rdbk_lock, flag);
 	if (sync) {
 		frame_id = dev->dmarx_dev.cur_frame.id;
 		sof_time = dev->dmarx_dev.cur_frame.sof_timestamp;
@@ -1000,7 +1000,7 @@ void rkisp_dmarx_get_frame(struct rkisp_device *dev, u32 *id,
 		sof_time = dev->dmarx_dev.pre_frame.sof_timestamp;
 		frame_timestamp = dev->dmarx_dev.pre_frame.timestamp;
 	}
-	spin_unlock_irqrestore(&dev->csi_dev.rdbk_lock, flag);
+	spin_unlock_irqrestore(&dev->rdbk_lock, flag);
 	if (id)
 		*id = frame_id;
 	if (sof_timestamp)
