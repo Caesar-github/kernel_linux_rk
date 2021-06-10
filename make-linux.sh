@@ -80,7 +80,7 @@ function make_toybrick_dtb()
 	rm -rf ${dts_path}/*.dtb
 	dts_list=`ls ${dts_path}/*-toybrick*.dts | awk -F'.' '{print $1}'`
 	for d in ${dts_list}; do
-		make -f ./scripts/Makefile.build obj=${dts_path} ${d}.dtb srctree=./ objtree=./
+		make -f ./scripts/Makefile.build obj=${dts_path} ${d}.dtb srctree=./ objtree=./ > /dev/null
 	done
 	cp ${dts_path}/*toybrick*.dtb boot_linux/extlinux/
 }
