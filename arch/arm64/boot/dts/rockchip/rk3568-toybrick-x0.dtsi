@@ -752,28 +752,6 @@
 	};
 };
 
-&i2c0 {
-	status = "okay";
-	rk809: pmic@20 {
-		compatible = "rockchip,rk809";
-		reg = <0x20>;
-		/*not save the PMIC_POWER_EN register in uboot */
-		not-save-power-en = <1>;
-		regulators {
-			vccio_acodec: LDO_REG4 {
-				regulator-always-on;
-				regulator-boot-on;
-				regulator-min-microvolt = <1800000>;
-				regulator-max-microvolt = <1800000>;
-				regulator-name = "vccio_acodec";
-				regulator-state-mem {
-					regulator-off-in-suspend;
-				};
-			};
-		};
-	};
-};
-
 &pwm7 {
 	status = "okay";
 };
