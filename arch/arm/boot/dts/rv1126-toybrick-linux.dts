@@ -47,6 +47,37 @@
 	>;
 };
 
+/**
+ * Model: TB-RV1126D
+ * ----------------------------------------------------------------
+ * supply         |  domain  |  net         | source  |  voltage  |
+ *-----------------------------------------------------------------
+ * pmuio0-supply  |  PMUIO0  |  VCC3V3_SYS  | BULK4   |  3.3V     |
+ * pmuio1-supply  |  PMUIO1  |  VCC3V3_SYS  | BULK4   |  3.3V     |
+ * vccio1-supply  |  VCCIO1  |  VCC_1V8     | LDO4    |  1.8V     |
+ * vccio2-supply  |  VCCIO2  |  VCCIO_FLASH | LDO4    |  1.8V     |
+ * vccio3-supply  |  VCCIO3  |  VCC_1V8     | LDO4    |  1.8V     |
+ * vccio4-supply  |  VCCIO4  |  VCC_1V8     | LDO4    |  1.8V     |
+ * vccio5-supply  |  VCCIO5  |  VCC_3V3     | SWOUT2  |  3.3V     |
+ * vccio6-supply  |  VCCIO6  |  VCC_1V8     | LDO4    |  1.8V     |
+ * vccio7-supply  |  VCCIO7  |  VCC_1V8     | LDO4    |  1.8V     |
+ * ---------------------------------------------------------------
+*/
+
+&pmu_io_domains {
+	status = "okay";
+
+	pmuio0-supply = <&vcc3v3_sys>;
+	pmuio1-supply = <&vcc3v3_sys>;
+	vccio1-supply = <&vcc_1v8>;
+	vccio2-supply = <&vccio_sd>;
+	vccio3-supply = <&vcc_1v8>;
+	vccio4-supply = <&vcc_1v8>;
+	vccio5-supply = <&vcc_3v3>;
+	vccio6-supply = <&vcc_3v3>;
+	vccio7-supply = <&vcc_3v3>;
+};
+
 &pwm0 {
     status = "disabled";
 };

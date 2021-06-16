@@ -193,11 +193,28 @@
 	};
 };
 
+/**
+ * Model: TB-ToyT01
+ * ----------------------------------------------------------------
+ * supply         |  domain  |  net         | source  |  voltage  |
+ *-----------------------------------------------------------------
+ * pmuio0-supply  |  PMUIO0  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * pmuio1-supply  |  PMUIO1  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * vccio1-supply  |  VCCIO1  |  VCC_1V8     | VCC_5V  |  1.8V     |
+ * vccio2-supply  |  VCCIO2  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * vccio3-supply  |  VCCIO3  |  VCC_1V8     | VCC_5V  |  1.8V     |
+ * vccio4-supply  |  VCCIO4  |  VCC_1V8     | VCC_5V  |  1.8V     |
+ * vccio5-supply  |  VCCIO5  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * vccio6-supply  |  VCCIO6  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * vccio7-supply  |  VCCIO7  |  VCC_3V3     | VCC_5V  |  3.3V     |
+ * ---------------------------------------------------------------
+*/
 &pmu_io_domains {
 	status = "okay";
 
 	pmuio0-supply = <&vcc3v3_sys>;
 	pmuio1-supply = <&vcc3v3_sys>;
+	vccio1-supply = <&vcc_1v8>;
 	vccio2-supply = <&vcc3v3_sys>;
 	vccio3-supply = <&vcc_1v8>;//wifi
 	vccio4-supply = <&vcc_1v8>;//spi
