@@ -6,6 +6,7 @@
 
 #include "rk3568-toybrick-x0.dtsi"
 #include "rk3568-linux.dtsi"
+/delete-node/ &board_id;
 / {
 	compatible = "rockchip,rk3568-toybrick-dev-linux-x0","rockchip,rk3568";
 };
