@@ -3,12 +3,8 @@
  * Copyright (c) 2020 Rockchip Electronics Co., Ltd.
  *
  */
-
-/dts-v1/;
-
 #include <dt-bindings/gpio/gpio.h>
 #include <dt-bindings/pinctrl/rockchip.h>
-#include "rk3568.dtsi"
 #include "rk3568-toybrick.dtsi"
 /delete-node/ &adc_keys;
 
