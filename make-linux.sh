@@ -50,7 +50,7 @@ MAX_BOARDID=32
 
 function help()
 {
-	echo "Usage: ./make-linux.sh {arm|arm64}"
+	echo "Usage: ./make-linux.sh {arm|arm64|ubifs}"
 	echo "e.g."
 	echo "  ./make-linux.sh arm"
 	echo "  ./make-linux.sh arm64"
@@ -214,6 +214,13 @@ case $1 in
 			make_extlinux_conf $i ext4
 		done
 		make_boot_linux ext4
+		;;
+	ubifs)
+		for i in "${model_ubifs[@]}"; do
+			make_kernel_image $i
+			make_extlinux_conf $i ubifs
+		done
+		make_boot_linux ubifs
 		;;
 	*)
 		if [ $# -eq 1 ]; then
