@@ -1,5 +1,7 @@
 #!/bin/bash
 
+MAKE="make CROSS_COMPILE=../../prebuilts/gcc/linux-x86/aarch64/gcc-linaro-7.5.0-2019.12-x86_64_aarch64-linux-gnu/bin/aarch64-linux-gnu-"
+
 CPUs=`sed -n "N;/processor/p" /proc/cpuinfo|wc -l`
 DEFCONFIG=
 #########################################################################################################################################
@@ -80,7 +82,7 @@ function make_toybrick_dtb()
 	rm -rf ${dts_path}/*.dtb
 	dts_list=`ls ${dts_path}/*-toybrick*.dts | awk -F'.' '{print $1}'`
 	for d in ${dts_list}; do
-		make -f ./scripts/Makefile.build obj=${dts_path} ${d}.dtb srctree=./ objtree=./ > /dev/null
+		${MAKE} -f ./scripts/Makefile.build obj=${dts_path} ${d}.dtb srctree=./ objtree=./ > /dev/null
 	done
 	cp ${dts_path}/*toybrick*.dtb boot_linux/extlinux/
 }
@@ -171,8 +173,8 @@ function make_kernel_image()
 	image=${!ID_IMAGE}
 
 	if [ "${config}" != "${DEFCONFIG}" ]; then
-		make ARCH=${arch} ${config}
-		make ARCH=${arch} ${dtb_name}.img -j${CPUs}
+		${MAKE} ARCH=${arch} ${config}
+		${MAKE} ARCH=${arch} ${dtb_name}.img -j${CPUs}
 		cp arch/${arch}/boot/`echo ${image} | awk -F'.' '{print $1}'` boot_linux/extlinux/${image} 
 		DEFCONFIG=${config}
 	fi
@@ -200,6 +202,7 @@ function make_boot_linux()
 rm -rf boot_linux
 mkdir -p boot_linux/extlinux
 touch boot_linux/extlinux/extlinux.conf
+
 case $1 in
 	arm)
 		for i in "${model_arm[@]}"; do
