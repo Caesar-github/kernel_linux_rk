@@ -32,6 +32,10 @@
 #include <linux/hid.h>
 #include <linux/hid-debug.h>
 
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+#include "hdf_hid_adapter.h"
+#endif
+
 #include "hid-ids.h"
 
 #define unk	KEY_UNKNOWN
@@ -1370,7 +1374,15 @@ void hidinput_report_event(struct hid_device *hid, struct hid_report *report)
 		return;
 
 	list_for_each_entry(hidinput, &hid->inputs, list)
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	{
+#endif
 		input_sync(hidinput->input);
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+		if(hid->input_dev)
+			HidReportEvent(hid->input_dev, EV_SYN, SYN_REPORT, 0);
+	}
+#endif
 }
 EXPORT_SYMBOL_GPL(hidinput_report_event);
 
@@ -1734,6 +1746,35 @@ static inline void hidinput_configure_usages(struct hid_input *hidinput,
 						 report->field[i]->usage + j);
 }
 
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+static void transfer_info(struct input_dev *dev)
+{
+	HidInfo *info = (HidInfo *)kmalloc(sizeof(HidInfo),GFP_KERNEL);
+	if (info == NULL) {
+		printk("%s: malloc failed\n",__func__);
+		return;
+	}
+	info->devName = dev->name;
+	memcpy(info->devProp, dev->propbit, sizeof(unsigned long) * BITS_TO_LONGS(INPUT_PROP_CNT));
+	memcpy(info->eventType, dev->evbit, sizeof(unsigned long) * BITS_TO_LONGS(EV_CNT));
+	memcpy(info->keyCode, dev->keybit, sizeof(unsigned long) * BITS_TO_LONGS(KEY_CNT));
+	memcpy(info->relCode, dev->relbit, sizeof(unsigned long) * BITS_TO_LONGS(REL_CNT));
+	memcpy(info->absCode, dev->absbit, sizeof(unsigned long) * BITS_TO_LONGS(ABS_CNT));
+	memcpy(info->miscCode, dev->mscbit, sizeof(unsigned long) * BITS_TO_LONGS(MSC_CNT));
+	memcpy(info->ledCode, dev->ledbit, sizeof(unsigned long) * BITS_TO_LONGS(LED_CNT));
+	memcpy(info->soundCode, dev->sndbit, sizeof(unsigned long) * BITS_TO_LONGS(SND_CNT));
+	memcpy(info->forceCode, dev->ffbit, sizeof(unsigned long) * BITS_TO_LONGS(FF_CNT));
+	memcpy(info->switchCode, dev->swbit, sizeof(unsigned long) * BITS_TO_LONGS(SW_CNT));
+	info->bustype = dev->id.bustype;
+	info->vendor = dev->id.vendor;
+	info->product = dev->id.product;
+	info->version = dev->id.version;
+	SendInfoToHdf(info);
+	kfree(info);
+	info = NULL;
+}
+#endif
+
 /*
  * Register the input device; print a message.
  * Configure the input layer interface
@@ -1816,7 +1857,9 @@ int hidinput_connect(struct hid_device *hid, unsigned int force)
 			hidinput_cleanup_hidinput(hid, hidinput);
 			continue;
 		}
-
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+		transfer_info(hidinput->input);
+#endif
 		if (input_register_device(hidinput->input))
 			goto out_unwind;
 		hidinput->registered = true;

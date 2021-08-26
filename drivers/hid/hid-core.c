@@ -36,6 +36,9 @@
 #include <linux/hid-debug.h>
 #include <linux/hidraw.h>
 
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+#include "hdf_hid_adapter.h"
+#endif
 #include "hid-ids.h"
 
 /*
@@ -1343,6 +1346,11 @@ static void hid_process_event(struct hid_device *hid, struct hid_field *field,
 		hidinput_hid_event(hid, field, usage, value);
 	if (hid->claimed & HID_CLAIMED_HIDDEV && interrupt && hid->hiddev_hid_event)
 		hid->hiddev_hid_event(hid, field, usage, value);
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	if (hid->input_dev) {
+		HidReportEvent(hid->input_dev, usage->type, usage->code, value);
+	}
+#endif
 }
 
 /*
@@ -1746,6 +1754,71 @@ static const struct device_attribute dev_attr_country = {
 	.show = show_country,
 };
 
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+static bool check_mouse(char *name)
+{
+	static char *option[]={"Mouse", "mouse", "MOUSE", "Razer"};
+	for (int i = 0; i < 4; i++) {
+		if (strstr(name, option[i]))
+			return true;
+	}
+	return false;
+}
+static bool check_kbd(char *name)
+{
+	static char *option[]={"Keyboard", "keyboard"};
+	for (int i = 0; i < 2; i++) {
+		if (strstr(name, option[i]))
+			return true;
+	}
+	return false;
+}
+static bool check_rocker(char *name)
+{
+	static char *option[]={"Thrustmaster"};
+	for (int i = 0; i < 1; i++) {
+		if (strstr(name, option[i]))
+			return true;
+	}
+	return false;
+}
+static bool check_encoder(char *name)
+{
+	if (strcmp(name, "Wired KeyBoard") == 0) {
+		return true;
+	}
+	return false;
+}
+static void notify_connect_event(struct hid_device *hdev)
+{
+	bool check;
+	int type = -1;
+	HidInfo *dev = (HidInfo *)kmalloc(sizeof(HidInfo), GFP_KERNEL);
+	if (dev == NULL) {
+		printk("%s: malloc failed", __func__);
+		return;
+	}
+	type = check_mouse(hdev->name)?HID_TYPE_MOUSE:type;
+	type = check_kbd(hdev->name)?HID_TYPE_KEYBOARD:type;
+	type = check_rocker(hdev->name)?HID_TYPE_ROCKER:type;
+	type = check_encoder(hdev->name)?HID_TYPE_ENCODER:type;
+	if ( type < 0) {
+		kfree(dev);
+		dev = NULL;
+		return;
+	}
+
+	dev->devType = type;
+	dev->devName = hdev->name;
+	hdev->input_dev = HidRegisterHdfInputDev(dev);
+	if (hdev->input_dev == NULL) {
+		printk("%s: RegisterInputDevice failed\n", __func__);
+	}
+	kfree(dev);
+	dev = NULL;
+}
+#endif
+
 int hid_connect(struct hid_device *hdev, unsigned int connect_mask)
 {
 	static const char *types[] = { "Device", "Pointer", "Mouse", "Device",
@@ -1835,6 +1908,9 @@ int hid_connect(struct hid_device *hdev, unsigned int connect_mask)
 	hid_info(hdev, "%s: %s HID v%x.%02x %s [%s] on %s\n",
 		 buf, bus, hdev->version >> 8, hdev->version & 0xff,
 		 type, hdev->name, hdev->phys);
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	notify_connect_event(hdev);
+#endif
 
 	return 0;
 }
@@ -1850,6 +1926,10 @@ void hid_disconnect(struct hid_device *hdev)
 	if (hdev->claimed & HID_CLAIMED_HIDRAW)
 		hidraw_disconnect(hdev);
 	hdev->claimed = 0;
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	if (hdev->input_dev)
+		HidUnregisterHdfInputDev(hdev->input_dev);
+#endif
 }
 EXPORT_SYMBOL_GPL(hid_disconnect);
 
@@ -1934,6 +2014,11 @@ EXPORT_SYMBOL_GPL(hid_hw_open);
  */
 void hid_hw_close(struct hid_device *hdev)
 {
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	if (hdev->input_dev) {
+		return;
+	}
+#endif
 	mutex_lock(&hdev->ll_open_lock);
 	if (!--hdev->ll_open_count)
 		hdev->ll_driver->close(hdev);

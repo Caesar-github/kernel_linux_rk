@@ -121,6 +121,14 @@ SECTIONS
 		__pv_table_end = .;
 	}
 
+#ifdef CONFIG_DRIVERS_HDF
+	.init.hdf_table : {
+		_hdf_drivers_start = .;
+		*(.hdf.driver)
+		_hdf_drivers_end = .;
+	}
+#endif
+
 	INIT_DATA_SECTION(16)
 
 	.exit.data : {

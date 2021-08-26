@@ -2,6 +2,15 @@
 #
 # Makefile for the HID driver
 #
+HDF_ROOT_DIR = -Idrivers/hdf
+ccflags-$(CONFIG_DRIVERS_HDF_INPUT) += $(HDF_ROOT_DIR)/framework/model/input/driver \
+             $(HDF_ROOT_DIR)/framework/include/core \
+             $(HDF_ROOT_DIR)/framework/core/common/include/host \
+             $(HDF_ROOT_DIR)/framework/include/utils \
+             $(HDF_ROOT_DIR)/framework/include/osal \
+             $(HDF_ROOT_DIR)/framework/ability/sbuf/include \
+             $(HDF_ROOT_DIR)/khdf/osal/include \
+             -I../../../../../third_party/FreeBSD/sys/dev/evdev
 hid-y			:= hid-core.o hid-input.o hid-quirks.o
 hid-$(CONFIG_DEBUG_FS)		+= hid-debug.o
 
