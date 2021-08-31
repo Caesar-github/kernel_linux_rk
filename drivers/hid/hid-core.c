@@ -1757,8 +1757,9 @@ static const struct device_attribute dev_attr_country = {
 #if defined(CONFIG_DRIVERS_HDF_INPUT)
 static bool check_mouse(char *name)
 {
+    int i;
 	static char *option[]={"Mouse", "mouse", "MOUSE", "Razer"};
-	for (int i = 0; i < 4; i++) {
+	for (i = 0; i < 4; i++) {
 		if (strstr(name, option[i]))
 			return true;
 	}
@@ -1766,8 +1767,9 @@ static bool check_mouse(char *name)
 }
 static bool check_kbd(char *name)
 {
+    int i;
 	static char *option[]={"Keyboard", "keyboard"};
-	for (int i = 0; i < 2; i++) {
+	for (i = 0; i < 2; i++) {
 		if (strstr(name, option[i]))
 			return true;
 	}
@@ -1775,8 +1777,9 @@ static bool check_kbd(char *name)
 }
 static bool check_rocker(char *name)
 {
+    int i;
 	static char *option[]={"Thrustmaster"};
-	for (int i = 0; i < 1; i++) {
+	for (i = 0; i < 1; i++) {
 		if (strstr(name, option[i]))
 			return true;
 	}
@@ -1791,7 +1794,6 @@ static bool check_encoder(char *name)
 }
 static void notify_connect_event(struct hid_device *hdev)
 {
-	bool check;
 	int type = -1;
 	HidInfo *dev = (HidInfo *)kmalloc(sizeof(HidInfo), GFP_KERNEL);
 	if (dev == NULL) {
