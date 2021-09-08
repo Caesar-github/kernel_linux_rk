@@ -29,6 +29,10 @@
 #include <linux/of_gpio.h>
 #define GSL_DEBUG 0
 
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+#include "hdf_hid_adapter.h"
+#endif
+
 #define TP2680A_ID	0x88
 #define TP2680B_ID	0x82
 #ifdef GSLX680_COMPATIBLE
@@ -211,6 +215,10 @@ struct gsl_ts {
 	spinlock_t irq_lock;
 	struct tp_device  tp;
 	struct work_struct download_fw_work;
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	void * hid_inputDev;
+#endif
+	
 };
 
 #if GSL_DEBUG
@@ -224,7 +232,9 @@ struct gsl_ts {
 
 static u32 id_sign[MAX_CONTACTS + 1] = {0};
 static u8 id_state_flag[MAX_CONTACTS + 1] = {0};
+#if !defined(CONFIG_DRIVERS_HDF_INPUT)
 static u8 id_state_old_flag[MAX_CONTACTS + 1] = {0};
+#endif
 static u16 x_old[MAX_CONTACTS + 1] = {0};
 static u16 y_old[MAX_CONTACTS + 1] = {0};
 static u16 x_new;
@@ -718,7 +728,7 @@ static void report_key(struct gsl_ts *ts, u16 x, u16 y)
 	}
 }
 #endif
-
+#if !defined(CONFIG_DRIVERS_HDF_INPUT)
 static void report_data(struct gsl_ts *ts, u16 x, u16 y, u8 pressure, u8 id)
 {
 #ifdef SWAP_XY
@@ -754,7 +764,7 @@ static void report_data(struct gsl_ts *ts, u16 x, u16 y, u8 pressure, u8 id)
 	input_mt_sync(ts->input);
 #endif
 }
-
+#endif
 void ts_irq_disable(struct gsl_ts *ts)
 {
 	unsigned long irqflags;
@@ -778,7 +788,120 @@ void ts_irq_enable(struct gsl_ts *ts)
 	}
 	spin_unlock_irqrestore(&ts->irq_lock, irqflags);
 }
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+static void gsl3673_ts_worker(struct work_struct *work)
+{
+	int rc, i;
+	u8 id, touches;
+	u16 x, y;
+	
+#ifdef GSL_NOID_VERSION
+	u32 tmp1;
+	u8 buf[4] = {0};
+	struct gsl_touch_info cinfo;
+#endif
 
+	struct gsl_ts *ts = container_of(work, struct gsl_ts, work);
+#ifdef TPD_PROC_DEBUG
+	if (gsl_proc_flag == 1)
+		goto schedule;
+#endif
+#ifdef GSL_MONITOR
+	if (i2c_lock_flag != 0)
+		goto i2c_lock_schedule;
+	else
+		i2c_lock_flag = 1;
+#endif
+	rc = gsl_ts_read(ts->client, 0x80, ts->touch_data, ts->dd->data_size);
+	if (rc < 0) {
+		dev_err(&ts->client->dev, "read failed\n");
+		goto schedule;
+	}
+	touches = ts->touch_data[ts->dd->touch_index];
+#ifdef GSL_NOID_VERSION
+	cinfo.finger_num = touches;
+	for (i = 0; i < (touches < MAX_CONTACTS ? touches : MAX_CONTACTS); i++) {
+		cinfo.x[i] = join_bytes((ts->touch_data[ts->dd->x_index  +
+				4 * i + 1] & 0xf), ts->touch_data[ts->dd->x_index + 4 * i]);
+		cinfo.y[i] = join_bytes(ts->touch_data[ts->dd->y_index + 4 * i + 1],
+				ts->touch_data[ts->dd->y_index + 4 * i]);
+		cinfo.id[i] = ((ts->touch_data[ts->dd->x_index  + 4 * i + 1]
+				& 0xf0) >> 4);
+	}
+	cinfo.finger_num = (ts->touch_data[3] << 24) | (ts->touch_data[2] << 16)
+		| (ts->touch_data[1] << 8) | (ts->touch_data[0]);
+	gsl_alg_id_main(&cinfo);
+	tmp1 = gsl_mask_tiaoping();
+	if (tmp1 > 0 && tmp1 < 0xffffffff) {
+		buf[0] = 0xa;
+		buf[1] = 0;
+		buf[2] = 0;
+		buf[3] = 0;
+		gsl_ts_write(ts->client, 0xf0, buf, 4);
+		buf[0] = (u8)(tmp1 & 0xff);
+		buf[1] = (u8)((tmp1 >> 8) & 0xff);
+		buf[2] = (u8)((tmp1 >> 16) & 0xff);
+		buf[3] = (u8)((tmp1 >> 24) & 0xff);
+		pr_err(
+				"tmp1=%08x,buf[0]=%02x,buf[1]=%02x,buf[2]=%02x,buf[3]=%02x\n",
+				tmp1, buf[0], buf[1], buf[2], buf[3]);
+		gsl_ts_write(ts->client, 0x8, buf, 4);
+	}
+	touches = cinfo.finger_num;
+#endif
+	for (i = 1; i <= MAX_CONTACTS; i++) {
+		if (touches == 0)
+			id_sign[i] = 0;
+		id_state_flag[i] = 0;
+	}
+	for (i = 0; i < (touches > MAX_FINGERS ? MAX_FINGERS : touches); i++) {
+	#ifdef GSL_NOID_VERSION
+		id = cinfo.id[i];
+		x =  cinfo.x[i];
+		y =  cinfo.y[i];
+	#else
+		x = join_bytes((ts->touch_data[ts->dd->x_index + 4 * i + 1]
+				& 0xf), ts->touch_data[ts->dd->x_index + 4 * i]);
+		y = join_bytes(ts->touch_data[ts->dd->y_index + 4 * i + 1],
+				ts->touch_data[ts->dd->y_index + 4 * i]);
+		id = ts->touch_data[ts->dd->id_index + 4 * i] >> 4;
+	#endif
+		if (id >= 1 && id <= MAX_CONTACTS) {
+		#ifdef FILTER_POINT
+			filter_point(x, y, id);
+		#else
+			record_point(x, y, id);
+		#endif
+			#if defined(CONFIG_DRIVERS_HDF_INPUT)
+			HidReportEvent(ts->hid_inputDev, EV_ABS, ABS_MT_POSITION_X, x);
+			HidReportEvent(ts->hid_inputDev, EV_ABS, ABS_MT_POSITION_Y, y);
+			HidReportEvent(ts->hid_inputDev, EV_ABS, ABS_MT_TRACKING_ID, id);
+			HidReportEvent(ts->hid_inputDev, EV_SYN, SYN_MT_REPORT, 0);
+			//report_data(ts, x_new, y_new, 10, id);
+			#endif
+			id_state_flag[id] = 1;
+		}
+		#if defined(CONFIG_DRIVERS_HDF_INPUT)
+			HidReportEvent(ts->hid_inputDev, EV_KEY, BTN_TOUCH, 1);
+		#endif
+	}
+	if(!touches) {
+	#if defined(CONFIG_DRIVERS_HDF_INPUT)
+		HidReportEvent(ts->hid_inputDev, EV_KEY, BTN_TOUCH, 0);
+	#endif
+	}
+	#if defined(CONFIG_DRIVERS_HDF_INPUT)
+		HidReportEvent(ts->hid_inputDev, 0, 0, 0);
+	#endif
+schedule:
+#ifdef GSL_MONITOR
+	i2c_lock_flag = 0;
+i2c_lock_schedule:
+#endif
+	ts_irq_enable(ts);
+
+}
+#else
 static void gsl3673_ts_worker(struct work_struct *work)
 {
 	int rc, i;
@@ -896,7 +1019,7 @@ i2c_lock_schedule:
 	ts_irq_enable(ts);
 
 }
-
+#endif
 #ifdef GSL_MONITOR
 static void gsl_monitor_worker(struct work_struct *work)
 {
@@ -1179,6 +1302,11 @@ static int  gsl_ts_probe(struct i2c_client *client,
 {
 	struct gsl_ts *ts;
 	int rc;
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	HidInfo *hid_dev = (HidInfo *)kmalloc(sizeof(HidInfo), GFP_KERNEL);
+	hid_dev->devType = 0;
+	hid_dev->devName = "GSL3673_HDF";
+#endif
     #if defined CONFIG_BOARD_TYPE_ZM1128CE
 		axp_gpio_set_io(PMU_GPIO_NUM, 1);
     #endif
@@ -1231,7 +1359,11 @@ static int  gsl_ts_probe(struct i2c_client *client,
 	gsl_proc_flag = 0;
 #endif
 	ts->flag_activated = true;
-
+#if defined(CONFIG_DRIVERS_HDF_INPUT)
+	ts->hid_inputDev = HidRegisterHdfInputDev(hid_dev);
+	if(NULL == ts->hid_inputDev)
+		pr_err("HidRegisterHdfInputDev error\n");
+#endif
 	return 0;
 error_init_chip_fail:
 	cancel_work_sync(&ts->download_fw_work);
